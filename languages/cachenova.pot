@@ -1,0 +1,23 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: CacheNova 1.0.0\n"
+"Report-Msgid-Bugs-To: https://shaoun18.github.io/\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-09-25T00:00:00+00:00\n"
+"PO-Revision-Date: 2026-09-25T00:00:00+00:00\n"
+"X-Generator: manual\n"
+"X-Domain: cachenova\n"
+"Language: en_US\n"
+
+#. Translators: shown as the aria-label on the "View details" link in the
+#. Plugins list row.
+#: includes/admin/admin.php:426
+msgid "More information about CacheNova"
+msgstr ""
+
+#. Translators: link text opening the plugin-information popup.
+#: includes/admin/admin.php:427
+msgid "View details"
+msgstr ""

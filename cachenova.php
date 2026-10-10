@@ -116,10 +116,6 @@ class RLCC_Cache_Cleaner {
 
 		add_action( 'admin_post_rlcc_manual_clear', [ $this->admin, 'manual_clear_fallback' ] );
 		add_action( 'admin_bar_menu', [ $this->admin, 'add_admin_bar_button' ], 100 );
-
-		add_filter( 'plugin_row_meta', [ $this->admin, 'add_view_details_link' ], 10, 2 );
-		add_filter( 'plugins_api', [ $this->admin, 'provide_plugin_information' ], 20, 3 );
-		add_action( 'admin_enqueue_scripts', [ $this->admin, 'maybe_enqueue_thickbox' ] );
 	}
 
 	private $settings_cache = null;

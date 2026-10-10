@@ -79,6 +79,11 @@ A persistent object cache lets WordPress reuse database query results across pag
 
 The cache-plugin detection and general WordPress cache clearing work on any site. The Static CSS File Generation override is Divi-specific and has no effect if Divi isn't active.
 
+== Screenshots ==
+
+1. CacheNova Settings Access — Find the CacheNova settings page under the WordPress Settings menu to configure cache management and optimization features.
+2. CacheNova Dashboard — Manage automatic cache clearing, toast notifications, public/private/object/browser cache types, cache reports, database optimization, persistent object cache, early-bypass page cache, and uninstall data settings from a modern dashboard.
+
 == Changelog ==
 
 = 1.0.0 =

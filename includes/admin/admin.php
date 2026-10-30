@@ -30,6 +30,7 @@ class RLCC_Admin {
 					'cache_object'     => [ 'required' => false ],
 					'cache_browser'    => [ 'required' => false ],
 					'delete_data_on_uninstall' => [ 'required' => false ],
+					'db_schedule'      => [ 'required' => false ],
 					'object_cache_enabled'        => [ 'required' => false ],
 					'object_cache_backend'        => [ 'required' => false ],
 					'object_cache_redis_host'     => [ 'required' => false ],
@@ -103,6 +104,8 @@ class RLCC_Admin {
         $settings['divi_per_request_purge'] = ! empty( $settings['divi_per_request_purge'] );
 		$settings['last_db_optimize']                = get_option( 'rlcc_last_db_optimize', null );
 		$settings['db_counts']                       = $this->get_database_counts();
+		$settings['db_next_run_timestamp']           = wp_next_scheduled( RLCC_Cache_Cleaner::DB_CRON_HOOK );
+		$settings['db_schedule']                     = $this->plugin->sanitize_db_schedule( $settings['db_schedule'] );
 		return rest_ensure_response( $settings );
 	}
 
@@ -132,7 +135,10 @@ class RLCC_Admin {
 		$cache_browser     = null !== $request->get_param( 'cache_browser' ) ? (bool) $request->get_param( 'cache_browser' ) : null;
 		$delete_data_on_uninstall = null !== $request->get_param( 'delete_data_on_uninstall' ) ? (bool) $request->get_param( 'delete_data_on_uninstall' ) : null;
 
-		$saved = $this->plugin->save_settings( $interval_minutes, $toast_enabled, $cache_public, $cache_private, $cache_object, $cache_browser, $delete_data_on_uninstall );
+		$db_schedule = null !== $request->get_param( 'db_schedule' ) ? sanitize_key( (string) $request->get_param( 'db_schedule' ) ) : null;
+
+		$saved = $this->plugin->save_settings( $interval_minutes, $toast_enabled, $cache_public, $cache_private, $cache_object, $cache_browser, $delete_data_on_uninstall, $db_schedule );
+		$saved['db_next_run_timestamp'] = wp_next_scheduled( RLCC_Cache_Cleaner::DB_CRON_HOOK );
 
 		$oc_enabled = $request->get_param( 'object_cache_enabled' );
 		$oc_touched = null !== $oc_enabled
@@ -206,7 +212,7 @@ class RLCC_Admin {
 		] );
 	}
 
-	public function optimize_database( $options ) {
+	public function optimize_database( $options, $type = 'manual' ) {
 		global $wpdb;
 		$report = [];
 
@@ -246,20 +252,33 @@ class RLCC_Admin {
 		}
 
 		if ( ! empty( $options['expired_transients'] ) ) {
-			// Use WordPress APIs so both database and external object-cache transients are handled safely.
-			$expired = $wpdb->get_col( $wpdb->prepare(
-				"SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND option_value < %d LIMIT 500",
-				$wpdb->esc_like( '_transient_timeout_' ) . '%', time()
-			) );
+			// Use WordPress APIs so both database and external object-cache transients are handled safely, in batches.
 			$deleted = 0;
-			foreach ( $expired as $name ) {
-				$key = substr( $name, strlen( '_transient_timeout_' ) );
-				if ( delete_transient( $key ) ) {
-					$deleted++;
+			for ( $batch = 0; $batch < 20; $batch++ ) {
+				$expired = $wpdb->get_col( $wpdb->prepare(
+					"SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND option_value < %d LIMIT 500",
+					$wpdb->esc_like( '_transient_timeout_' ) . '%', time()
+				) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+				if ( empty( $expired ) ) {
+					break;
+				}
+				$batch_deleted = 0;
+				foreach ( $expired as $name ) {
+					$key = substr( $name, strlen( '_transient_timeout_' ) );
+					if ( delete_transient( $key ) ) {
+						$batch_deleted++;
+					} else {
+						// Orphaned timeout row: remove it directly so the loop always makes progress.
+						delete_option( $name );
+						$batch_deleted++;
+					}
+				}
+				$deleted += $batch_deleted;
+				if ( count( $expired ) < 500 ) {
+					break;
 				}
 			}
 			$report['expired_transients'] = $deleted;
-			$report['expired_transients_batch_limit'] = 500;
 		}
 
 		if ( ! empty( $options['optimize_tables'] ) ) {
@@ -281,7 +300,7 @@ class RLCC_Admin {
 		wp_defer_comment_counting( false );
 
 		wp_cache_delete( 'rlcc_db_counts', 'cachenova' );
-		update_option( 'rlcc_last_db_optimize', [ 'timestamp' => time(), 'report' => $report ] );
+		update_option( 'rlcc_last_db_optimize', [ 'timestamp' => time(), 'report' => $report, 'type' => 'auto' === $type ? 'auto' : 'manual' ] );
 		return $report;
 	}
 

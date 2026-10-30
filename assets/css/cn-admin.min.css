@@ -662,3 +662,13 @@ body.settings_page_rlcc-settings #wpcontent {background:#f3f5fa;}
 
 /* CacheNova Divi compatibility control */
 .rlcc-divi-compat{margin:20px 0;padding:24px!important;border:1px solid #dce2f2!important;border-left:4px solid #6955ee!important}.rlcc-divi-compat p{color:#526079;margin:12px 0 18px;line-height:1.6}
+
+/* CacheNova tabs, database schedule row, footer */
+.rlcc-tabs{display:flex;gap:8px;margin:0 0 20px;padding:6px;background:#fff;border:1px solid #e8ebf3;border-radius:14px;box-shadow:var(--rlcc-shadow);width:fit-content;max-width:100%;flex-wrap:wrap}
+.rlcc-tab{appearance:none;border:0;background:transparent;color:#56617b;font:inherit;font-size:13.5px;font-weight:650;padding:10px 18px;border-radius:10px;cursor:pointer;transition:background .15s ease,color .15s ease}
+.rlcc-tab:hover{background:#f4f3ff;color:#4a3fc7}
+.rlcc-tab--active,.rlcc-tab--active:hover{background:#635bdf;color:#fff}
+.rlcc-db-status{display:flex;align-items:center;min-height:43px;padding:9px 14px;border-radius:9px;font-size:13.5px;font-weight:600;border:1px solid #dfe3ed;background:#f8f9fc;color:#56617b}
+.rlcc-db-status--on{background:#e9f8f0;border-color:#a6e6c4;color:#147a46}
+.rlcc-footer-grid{margin-top:20px}
+@media(max-width:782px){.rlcc-tabs{width:100%}.rlcc-tab{flex:1;text-align:center;padding:10px 12px}}

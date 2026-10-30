@@ -86,6 +86,12 @@ The cache-plugin detection and general WordPress cache clearing work on any site
 
 == Changelog ==
 
+= 1.1.0 =
+* New "Database Optimization" tab with automatic scheduling: every 1 day, 7 days, or month — each run clears all revisions, trash, spam and expired transients, then optimizes tables.
+* Fixed Divi et-cache folder not being removed on Clear Cache: Windows-safe path checks, read-only file handling, retry, and a final end-of-request purge.
+* Clear Cache now also clears Elementor, Beaver Builder, Bricks, Oxygen, WooCommerce transients and more popular cache plugins and hosts.
+* Delete-data-on-uninstall now sits in the footer of every tab and also removes the new schedule.
+
 = 1.0.0 =
 * Initial public release. Auto-clears transients, object cache, OPcache, and page cache on save or schedule, on any WordPress theme or plugin.
 * Optional built-in Public/Private page cache with a true early-bypass mode (serves cached pages before WordPress even loads).

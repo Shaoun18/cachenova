@@ -87,7 +87,7 @@ if ( ! $rlcc_delete_all ) {
 	return;
 }
 
-$rlcc_cron_hooks = [ 'rlcc_background_clear_event', 'rlcc_deferred_full_clear_event' ];
+$rlcc_cron_hooks = [ 'rlcc_background_clear_event', 'rlcc_deferred_full_clear_event', 'rlcc_db_optimize_event' ];
 foreach ( $rlcc_cron_hooks as $rlcc_hook ) {
 	$rlcc_timestamp = wp_next_scheduled( $rlcc_hook );
 	while ( $rlcc_timestamp ) {
@@ -102,6 +102,9 @@ $rlcc_options = [
 	'rlcc_last_cleared',
 	'rlcc_last_clear_type',
 	'rlcc_asset_version',
+	'rlcc_last_clear_report',
+	'rlcc_last_db_optimize',
+	'rlcc_installed_version',
 ];
 foreach ( $rlcc_options as $rlcc_option ) {
 	delete_option( $rlcc_option );

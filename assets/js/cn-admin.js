@@ -43,6 +43,12 @@
         10080: "7 days",
         43200: "30 days (monthly)"
     };
+    const DB_SCHEDULE_LABELS = {
+        off: "Off (manual only)",
+        daily: "Every 1 day",
+        weekly: "Every 7 days",
+        monthly: "Every month"
+    };
     const OC_BACKEND_LABELS = {
         redis: "Redis",
         memcached: "Memcache",
@@ -63,7 +69,9 @@
         const mins = Math.round(seconds / 60);
         if (mins < 60) return mins + " min ago";
         const hrs = Math.round(mins / 60);
-        return hrs + " hr ago";
+        if (hrs < 24) return hrs + " hr ago";
+        const days = Math.round(hrs / 24);
+        return days + (days === 1 ? " day ago" : " days ago");
     }
     function InfoTip({text: text}) {
         return h("span", {
@@ -78,6 +86,17 @@
         }, text), h("span", {
             className: "screen-reader-text"
         }, text));
+    }
+    function formatDateTime(timestamp) {
+        if (!timestamp) return "—";
+        try {
+            return new Date(timestamp * 1e3).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short"
+            });
+        } catch (e) {
+            return new Date(timestamp * 1e3).toString();
+        }
     }
     class RLCCErrorBoundary extends Component {
         constructor(props) {
@@ -157,6 +176,11 @@
             expired_transients: true,
             optimize_tables: false
         });
+        const [activeTab, setActiveTab] = useState(window.location.hash === "#database" ? "database" : "cache");
+        const [dbSchedule, setDbSchedule] = useState("off");
+        const [dbNextRun, setDbNextRun] = useState(0);
+        const [dbLastType, setDbLastType] = useState("manual");
+        const [dbScheduleSaving, setDbScheduleSaving] = useState(false);
         const [dbRunning, setDbRunning] = useState(false);
         const [dbLastReport, setDbLastReport] = useState(null);
         const [dbLastTimestamp, setDbLastTimestamp] = useState(0);
@@ -277,9 +301,12 @@
                     trashed_comments: 0,
                     expired_transients: 0
                 });
+                setDbSchedule(res.db_schedule || "off");
+                setDbNextRun(res.db_next_run_timestamp || 0);
                 if (res.last_db_optimize) {
                     setDbLastReport(res.last_db_optimize.report || null);
                     setDbLastTimestamp(res.last_db_optimize.timestamp || 0);
+                    setDbLastType(res.last_db_optimize.type || "manual");
                 }
                 setNextRun(res.next_run_timestamp);
                 if (isBackgroundPoll && res.last_cleared_timestamp && res.last_cleared_timestamp !== lastNotifiedClearRef.current) {
@@ -537,6 +564,45 @@
             }).catch(err => pushToast("Could not save Divi setting: " + (err.message || "Unknown error"), "error"))
               .finally(() => setDiviPurgeSaving(false));
         }
+        function dbReportTotal(report) {
+            if (!report) return 0;
+            return Object.keys(report).filter(k => k !== "optimize_tables").reduce((sum, k) => sum + (typeof report[k] === "number" ? report[k] : 0), 0);
+        }
+        function switchTab(tab) {
+            setActiveTab(tab);
+            try {
+                window.history.replaceState(null, "", tab === "database" ? "#database" : window.location.pathname + window.location.search);
+            } catch (e) {}
+        }
+        function handleDbScheduleChange(e) {
+            const val = e.target.value;
+            if (val !== "off") {
+                const confirmed = window.confirm("Automatic database optimization (" + (DB_SCHEDULE_LABELS[val] || val) + ") will permanently delete ALL post revisions, trashed posts, spam comments, trashed comments and expired transients, then optimize the tables, every time it runs. This cannot be undone. Turn it on?");
+                if (!confirmed) return;
+            }
+            const previous = dbSchedule;
+            setDbSchedule(val);
+            setDbScheduleSaving(true);
+            apiFetch({
+                path: NS + "/settings",
+                method: "POST",
+                data: {
+                    interval_minutes: intervalRef.current,
+                    toast_enabled: toastEnabledRef.current,
+                    db_schedule: val
+                }
+            }).then(res => {
+                setDbScheduleSaving(false);
+                setDbSchedule(res.db_schedule || val);
+                setDbNextRun(res.db_next_run_timestamp || 0);
+                pushToast(val === "off" ? "Automatic database optimization turned OFF." : "Automatic database optimization set: " + (DB_SCHEDULE_LABELS[val] || val) + ".", "success");
+            }).catch(err => {
+                setDbScheduleSaving(false);
+                setDbSchedule(previous);
+                const detail = err && (err.message || err.code) || "unknown error";
+                pushToast("Failed to save database schedule: " + detail, "error");
+            });
+        }
         function toggleDbOption(key) {
             setDbOptions(prev => ({
                 ...prev,
@@ -562,7 +628,8 @@
                 setDbRunning(false);
                 setDbLastReport(res.report);
                 setDbLastTimestamp(res.timestamp);
-                const total = Object.values(res.report).reduce((sum, n) => sum + (typeof n === "number" ? n : 0), 0);
+                setDbLastType("manual");
+                const total = dbReportTotal(res.report);
                 pushToast("Database optimized — " + total + " item(s) cleaned.", "success");
                 fetchSettings(false, false);
             }).catch(err => {
@@ -583,7 +650,7 @@
                 setNextRun(res.next_run_timestamp);
                 reminderFiredForRef.current = null;
                 setClearing(false);
-                pushToast(res.divi_folder_deleted === false ? (res.divi_folder_message || "Cache cleared, but Divi et-cache still exists.") : "Cache clear finished; Divi et-cache was absent at verification. Divi may recreate it. Timer restarted.", res.divi_folder_deleted === false ? "error" : "success");
+                pushToast(res.divi_folder_deleted === false ? (res.divi_folder_message || "Cache cleared, but Divi et-cache still exists.") : "All theme & plugin caches cleared. Timer restarted.", res.divi_folder_deleted === false ? "error" : "success");
                 if (res.last_clear_report) {
                     setLastClearReport(res.last_clear_report);
                 } else {
@@ -640,6 +707,70 @@
                 }, meta.text));
             })));
         }
+        function renderDbTab() {
+            const scheduleOn = dbSchedule !== "off";
+            return h("div", {
+                className: "rlcc-card-grid"
+            }, h("div", {
+                className: "rlcc-card rlcc-card--wide"
+            }, h("h3", {
+                className: "rlcc-card-title"
+            }, h("span", {
+                className: "rlcc-card-symbol",
+                "aria-hidden": "true"
+            }, "◷"), "Automatic Optimization", h(InfoTip, {
+                text: "Runs in the background on WordPress cron. Each run clears ALL post revisions, trashed posts, spam comments, trashed comments and expired transients, then optimizes the database tables. Off by default."
+            })), h("div", {
+                className: "rlcc-grid"
+            }, h("div", {
+                className: "rlcc-field"
+            }, h("label", null, "Auto-optimize every"), h("select", {
+                value: dbSchedule,
+                onChange: handleDbScheduleChange,
+                disabled: dbScheduleSaving,
+                className: "rlcc-select"
+            }, Object.keys(DB_SCHEDULE_LABELS).map(k => h("option", {
+                key: k,
+                value: k
+            }, DB_SCHEDULE_LABELS[k])))), h("div", {
+                className: "rlcc-field"
+            }, h("label", null, "Status"), h("div", {
+                className: "rlcc-db-status " + (scheduleOn ? "rlcc-db-status--on" : "rlcc-db-status--off")
+            }, scheduleOn ? "Active — next run " + formatDateTime(dbNextRun) : "Off — nothing runs automatically")))), h("div", {
+                className: "rlcc-card rlcc-card--wide"
+            }, h("h3", {
+                className: "rlcc-card-title"
+            }, h("span", {
+                className: "rlcc-card-symbol",
+                "aria-hidden": "true"
+            }, "▤"), "Manual Optimization", h(InfoTip, {
+                text: "Cleans up post revisions, trashed items, spam comments, and expired transients, and defragments your database tables. Nothing runs until you click the button below, and only for the items you've checked."
+            })), h("div", {
+                className: "rlcc-db-grid"
+            }, [ [ "revisions", "Post Revisions" ], [ "trashed_posts", "Trashed Posts" ], [ "spam_comments", "Spam Comments" ], [ "trashed_comments", "Trashed Comments" ], [ "expired_transients", "Expired Transients" ] ].map(([key, label]) => h("label", {
+                key: key,
+                className: "rlcc-db-checkbox"
+            }, h("input", {
+                type: "checkbox",
+                checked: !!dbOptions[key],
+                onChange: () => toggleDbOption(key)
+            }), h("span", null, label), h("span", {
+                className: "rlcc-db-count"
+            }, dbCounts[key] || 0))), h("label", {
+                className: "rlcc-db-checkbox"
+            }, h("input", {
+                type: "checkbox",
+                checked: !!dbOptions.optimize_tables,
+                onChange: () => toggleDbOption("optimize_tables")
+            }), h("span", null, "Optimize Database Tables"))), h("button", {
+                className: "rlcc-clear-btn",
+                onClick: handleDbOptimize,
+                disabled: dbRunning,
+                type: "button"
+            }, dbRunning ? "Optimizing…" : "Optimize Database Now"), dbLastTimestamp > 0 && h("p", {
+                className: "rlcc-hint"
+            }, "Last run: ", timeAgo(dbLastTimestamp), " (" + (dbLastType === "auto" ? "automatic" : "manual") + ")", dbLastReport ? " — " + dbReportTotal(dbLastReport) + " item(s) cleaned" + (dbLastReport.optimize_tables ? ", " + dbLastReport.optimize_tables + " table(s) optimized" : "") : "")));
+        }
         if (loading) {
             return h("div", {
                 className: "rlcc-dashboard-loading"
@@ -675,12 +806,22 @@
             className: "rlcc-hero-meta-item rlcc-hero-meta-item--divi"
         }, "Divi detected — cache cleared on updates and scheduled runs") : h("div", {
             className: "rlcc-hero-meta-item"
-        }, "Works with WordPress themes — automatic cache clearing enabled"))), diviActive && h("div", {className:"rlcc-card rlcc-divi-compat"},
+        }, "Works with WordPress themes — automatic cache clearing enabled"))), h("div", {
+            className: "rlcc-tabs",
+            role: "tablist"
+        }, [ [ "cache", "Cache Settings" ], [ "database", "Database Optimization" ] ].map(([key, label]) => h("button", {
+            key: key,
+            type: "button",
+            role: "tab",
+            "aria-selected": activeTab === key,
+            className: "rlcc-tab" + (activeTab === key ? " rlcc-tab--active" : ""),
+            onClick: () => switchTab(key)
+        }, label))), diviActive && activeTab === "cache" && h("div", {className:"rlcc-card rlcc-divi-compat"},
             h("h3", {className:"rlcc-card-title"}, "Divi Cache Compatibility"),
             h("p", null, "Delete the entire wp-content/et-cache folder immediately when enabled and after frontend requests. Divi may recreate it. Can significantly slow your site."),
             h("button", {type:"button", className:"rlcc-switch " + (diviPerRequest ? "rlcc-switch--on" : "rlcc-switch--off"), onClick:toggleDiviPerRequest, disabled:diviPurgeSaving, "aria-pressed":diviPerRequest},
                 h("span", {className:"rlcc-switch-knob"}), h("span", {className:"rlcc-switch-label"}, diviPerRequest ? "On" : "Off"))
-        ), h("div", {
+        ), activeTab === "database" ? renderDbTab() : h("div", {
             className: "rlcc-card-grid"
         }, h("div", {
             className: "rlcc-card"
@@ -863,37 +1004,9 @@
             className: "rlcc-oc-status rlcc-oc-status--" + ecResultStatus
         }, ecResultMessage), !ecWpConfigWritable && h("p", {
             className: "rlcc-oc-unavailable"
-        }, "wp-config.php doesn't look writable — if enabling doesn't take effect, add define('WP_CACHE', true); yourself near the top, right after the opening <?php tag.")), h("div", {
-            className: "rlcc-card rlcc-card--wide"
-        }, h("h3", {
-            className: "rlcc-card-title"
-        }, "Database Optimization", h(InfoTip, {
-            text: "Cleans up post revisions, trashed items, spam comments, and expired transients, and defragments your database tables. Off by default — nothing runs until you click the button below, and only for the items you've checked."
-        })), h("div", {
-            className: "rlcc-db-grid"
-        }, [ [ "revisions", "Post Revisions" ], [ "trashed_posts", "Trashed Posts" ], [ "spam_comments", "Spam Comments" ], [ "trashed_comments", "Trashed Comments" ], [ "expired_transients", "Expired Transients" ] ].map(([key, label]) => h("label", {
-            key: key,
-            className: "rlcc-db-checkbox"
-        }, h("input", {
-            type: "checkbox",
-            checked: !!dbOptions[key],
-            onChange: () => toggleDbOption(key)
-        }), h("span", null, label), h("span", {
-            className: "rlcc-db-count"
-        }, dbCounts[key] || 0))), h("label", {
-            className: "rlcc-db-checkbox"
-        }, h("input", {
-            type: "checkbox",
-            checked: !!dbOptions.optimize_tables,
-            onChange: () => toggleDbOption("optimize_tables")
-        }), h("span", null, "Optimize Database Tables"))), h("button", {
-            className: "rlcc-clear-btn",
-            onClick: handleDbOptimize,
-            disabled: dbRunning,
-            type: "button"
-        }, dbRunning ? "Optimizing…" : "Optimize Database Now"), dbLastTimestamp > 0 && h("p", {
-            className: "rlcc-hint"
-        }, "Last run: ", timeAgo(dbLastTimestamp), dbLastReport ? " — " + Object.values(dbLastReport).reduce((sum, n) => sum + (typeof n === "number" ? n : 0), 0) + " item(s) cleaned" : "")), h("div", {
+        }, "wp-config.php doesn't look writable — if enabling doesn't take effect, add define('WP_CACHE', true); yourself near the top, right after the opening <?php tag."))), h("div", {
+            className: "rlcc-card-grid rlcc-footer-grid"
+        }, h("div", {
             className: "rlcc-card rlcc-card--wide rlcc-card--danger"
         }, h("h3", {
             className: "rlcc-card-title rlcc-card-title--danger"

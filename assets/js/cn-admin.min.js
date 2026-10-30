@@ -98,6 +98,82 @@
             return new Date(timestamp * 1e3).toString();
         }
     }
+    const MODAL_ICONS = {
+        danger: "!",
+        warning: "!",
+        info: "i"
+    };
+    function ConfirmModal({modal: modal, onCancel: onCancel, onConfirm: onConfirm}) {
+        const confirmRef = useRef(null);
+        const cancelRef = useRef(null);
+        useEffect(() => {
+            if (!modal) return;
+            const previous = document.activeElement;
+            const target = "danger" === modal.tone ? cancelRef.current : confirmRef.current;
+            if (target) target.focus();
+            function onKey(e) {
+                if (e.key === "Escape") {
+                    e.preventDefault();
+                    onCancel();
+                } else if (e.key === "Tab") {
+                    const nodes = [ cancelRef.current, confirmRef.current ].filter(Boolean);
+                    if (!nodes.length) return;
+                    const first = nodes[0], last = nodes[nodes.length - 1];
+                    if (e.shiftKey && document.activeElement === first) {
+                        e.preventDefault();
+                        last.focus();
+                    } else if (!e.shiftKey && document.activeElement === last) {
+                        e.preventDefault();
+                        first.focus();
+                    }
+                }
+            }
+            document.addEventListener("keydown", onKey);
+            return () => {
+                document.removeEventListener("keydown", onKey);
+                if (previous && previous.focus) previous.focus();
+            };
+        }, [ modal ]);
+        if (!modal) return null;
+        const tone = modal.tone || "info";
+        return h("div", {
+            className: "rlcc-modal-overlay",
+            onMouseDown: e => {
+                if (e.target === e.currentTarget) onCancel();
+            }
+        }, h("div", {
+            className: "rlcc-modal rlcc-modal--" + tone,
+            role: "alertdialog",
+            "aria-modal": "true",
+            "aria-labelledby": "rlcc-modal-title",
+            "aria-describedby": "rlcc-modal-desc"
+        }, h("div", {
+            className: "rlcc-modal-icon",
+            "aria-hidden": "true"
+        }, MODAL_ICONS[tone] || "i"), h("h3", {
+            className: "rlcc-modal-title",
+            id: "rlcc-modal-title"
+        }, modal.title), h("p", {
+            className: "rlcc-modal-text",
+            id: "rlcc-modal-desc"
+        }, modal.message), modal.points && modal.points.length ? h("ul", {
+            className: "rlcc-modal-points"
+        }, modal.points.map((pt, i) => h("li", {
+            key: i
+        }, pt))) : null, h("div", {
+            className: "rlcc-modal-actions"
+        }, h("button", {
+            type: "button",
+            ref: cancelRef,
+            className: "rlcc-modal-btn rlcc-modal-btn--ghost",
+            onClick: onCancel
+        }, modal.cancelLabel || "Cancel"), h("button", {
+            type: "button",
+            ref: confirmRef,
+            className: "rlcc-modal-btn rlcc-modal-btn--" + tone,
+            onClick: onConfirm
+        }, modal.confirmLabel || "Continue"))));
+    }
     class RLCCErrorBoundary extends Component {
         constructor(props) {
             super(props);
@@ -176,6 +252,18 @@
             expired_transients: true,
             optimize_tables: false
         });
+        const [modal, setModal] = useState(null);
+        function askConfirm(opts) {
+            setModal(opts);
+        }
+        function closeModal() {
+            setModal(null);
+        }
+        function acceptModal() {
+            const fn = modal && modal.onConfirm;
+            setModal(null);
+            if (fn) fn();
+        }
         const [activeTab, setActiveTab] = useState(window.location.hash === "#database" ? "database" : "cache");
         const [dbSchedule, setDbSchedule] = useState("off");
         const [dbNextRun, setDbNextRun] = useState(0);
@@ -416,17 +504,25 @@
         }
         function handleDeleteOnUninstallToggle() {
             const newVal = !deleteOnUninstall;
-            if (newVal) {
-                const confirmed = window.confirm("When this is ON, deleting CacheNova from Plugins → Installed Plugins will permanently erase all of this plugin's settings and cached files, and trigger one final full-site cache clear. This cannot be undone. Turn it on?");
-                if (!confirmed) {
-                    return;
-                }
+            const apply = () => {
+                setDeleteOnUninstall(newVal);
+                deleteOnUninstallRef.current = newVal;
+                saveSettings({
+                    delete_data_on_uninstall: newVal
+                }, "Delete all data on uninstall turned " + (newVal ? "ON" : "OFF") + ".");
+            };
+            if (!newVal) {
+                apply();
+                return;
             }
-            setDeleteOnUninstall(newVal);
-            deleteOnUninstallRef.current = newVal;
-            saveSettings({
-                delete_data_on_uninstall: newVal
-            }, "Delete all data on uninstall turned " + (newVal ? "ON" : "OFF") + ".");
+            askConfirm({
+                tone: "danger",
+                title: "Delete all data on uninstall?",
+                message: "When you delete CacheNova from Plugins → Installed Plugins, everything it created will be removed. This cannot be undone.",
+                points: [ "All CacheNova settings and reports", "All cached files", "One final full-site cache clear" ],
+                confirmLabel: "Yes, turn it on",
+                onConfirm: apply
+            });
         }
         function saveObjectCacheSettings(overrides, onDone) {
             setOcSaving(true);
@@ -477,14 +573,19 @@
         function handleOcToggle() {
             const newVal = !ocEnabled;
             if (newVal) {
-                const confirmed = window.confirm("This installs a wp-content/object-cache.php file that changes how WordPress caches data site-wide. This plugin automatically detects and uses the fastest backend this server actually has working — no manual setup needed. Continue?");
-                if (!confirmed) {
-                    return;
-                }
-                setOcTestStatus("testing");
-                saveObjectCacheSettings({
-                    object_cache_enabled: newVal,
-                    object_cache_backend: "auto"
+                askConfirm({
+                    tone: "info",
+                    title: "Enable Persistent Object Cache?",
+                    message: "CacheNova will install wp-content/object-cache.php, which changes how WordPress caches data across the whole site. It automatically picks the fastest backend your server has working.",
+                    points: [ "Backend order: Redis, Memcached, APCu, then file-based", "No manual setup needed" ],
+                    confirmLabel: "Enable",
+                    onConfirm: () => {
+                        setOcTestStatus("testing");
+                        saveObjectCacheSettings({
+                            object_cache_enabled: newVal,
+                            object_cache_backend: "auto"
+                        });
+                    }
                 });
                 return;
             }
@@ -512,11 +613,19 @@
                     pushToast("Turn on Public Cache first — early-bypass caching serves the same cached files, just before WordPress loads.", "error");
                     return;
                 }
-                const confirmed = window.confirm("This installs a wp-content/advanced-cache.php file AND adds define('WP_CACHE', true) to wp-config.php, so cached pages can be served before WordPress even loads. Continue?");
-                if (!confirmed) {
-                    return;
-                }
+                askConfirm({
+                    tone: "info",
+                    title: "Enable Early-Bypass Page Cache?",
+                    message: "CacheNova will install wp-content/advanced-cache.php and add define('WP_CACHE', true) to wp-config.php, so cached pages are served before WordPress even loads.",
+                    points: [ "Anonymous visitors only; logged-in users get Private Cache", "Removed automatically when you turn it off" ],
+                    confirmLabel: "Enable",
+                    onConfirm: () => runEarlyCache(newVal)
+                });
+                return;
             }
+            runEarlyCache(newVal);
+        }
+        function runEarlyCache(newVal) {
             setEcSaving(true);
             apiFetch({
                 path: NS + "/settings",
@@ -556,7 +665,19 @@
         function toggleDiviPerRequest() {
             if (diviPurgeSaving) return;
             const enabled = !diviPerRequest;
-            if (enabled && !window.confirm("Warning: clearing Divi et-cache after every frontend request can significantly slow down your website. Enable only for troubleshooting?")) return;
+            if (enabled) {
+                askConfirm({
+                    tone: "warning",
+                    title: "Enable Divi cache compatibility?",
+                    message: "CacheNova will delete the Divi et-cache folder after every frontend request. This can noticeably slow your website, so use it only for troubleshooting.",
+                    confirmLabel: "Enable anyway",
+                    onConfirm: () => runDiviPerRequest(enabled)
+                });
+                return;
+            }
+            runDiviPerRequest(enabled);
+        }
+        function runDiviPerRequest(enabled) {
             setDiviPurgeSaving(true);
             apiFetch({path: NS + "/divi-per-request", method: "POST", data: {enabled}}).then(res => {
                 setDiviPerRequest(!!res.enabled);
@@ -577,9 +698,19 @@
         function handleDbScheduleChange(e) {
             const val = e.target.value;
             if (val !== "off") {
-                const confirmed = window.confirm("Automatic database optimization (" + (DB_SCHEDULE_LABELS[val] || val) + ") will permanently delete ALL post revisions, trashed posts, spam comments, trashed comments and expired transients, then optimize the tables, every time it runs. This cannot be undone. Turn it on?");
-                if (!confirmed) return;
+                askConfirm({
+                    tone: "danger",
+                    title: "Turn on automatic optimization?",
+                    message: "CacheNova will run " + (DB_SCHEDULE_LABELS[val] || val).toLowerCase() + " in the background. Every run permanently deletes the items below. This cannot be undone.",
+                    points: [ "All post revisions and trashed posts", "Spam and trashed comments", "Expired transients, then optimizes tables" ],
+                    confirmLabel: "Turn on",
+                    onConfirm: () => runDbSchedule(val)
+                });
+                return;
             }
+            runDbSchedule(val);
+        }
+        function runDbSchedule(val) {
             const previous = dbSchedule;
             setDbSchedule(val);
             setDbScheduleSaving(true);
@@ -615,10 +746,15 @@
                 pushToast("Select at least one item to optimize.", "error");
                 return;
             }
-            const confirmed = window.confirm("This permanently deletes the selected items (revisions, trash, spam are not recoverable afterward). Continue?");
-            if (!confirmed) {
-                return;
-            }
+            askConfirm({
+                tone: "danger",
+                title: "Optimize database now?",
+                message: "The selected items will be permanently deleted. Revisions, trash and spam cannot be recovered afterward.",
+                confirmLabel: "Optimize now",
+                onConfirm: runDbOptimize
+            });
+        }
+        function runDbOptimize() {
             setDbRunning(true);
             apiFetch({
                 path: NS + "/database/optimize",
@@ -769,7 +905,25 @@
                 type: "button"
             }, dbRunning ? "Optimizing…" : "Optimize Database Now"), dbLastTimestamp > 0 && h("p", {
                 className: "rlcc-hint"
-            }, "Last run: ", timeAgo(dbLastTimestamp), " (" + (dbLastType === "auto" ? "automatic" : "manual") + ")", dbLastReport ? " — " + dbReportTotal(dbLastReport) + " item(s) cleaned" + (dbLastReport.optimize_tables ? ", " + dbLastReport.optimize_tables + " table(s) optimized" : "") : "")));
+            }, "Last run: ", timeAgo(dbLastTimestamp), " (" + (dbLastType === "auto" ? "automatic" : "manual") + ")", dbLastReport ? " — " + dbReportTotal(dbLastReport) + " item(s) cleaned" + (dbLastReport.optimize_tables ? ", " + dbLastReport.optimize_tables + " table(s) optimized" : "") : "")), h("div", {
+            className: "rlcc-card rlcc-card--wide rlcc-card--danger"
+        }, h("h3", {
+            className: "rlcc-card-title rlcc-card-title--danger"
+        }, "Danger Zone"), h("div", {
+            className: "rlcc-danger-row"
+        }, h("div", {
+            className: "rlcc-danger-text"
+        }, h("label", null, "Delete all data on uninstall", h(InfoTip, {
+            text: "Off by default. When ON, removing this plugin from Plugins → Installed Plugins deletes all of its settings and cached files, and runs one last full-site cache clear in the background."
+        }))), h("button", {
+            className: "rlcc-switch rlcc-switch--danger " + (deleteOnUninstall ? "rlcc-switch--on" : "rlcc-switch--off"),
+            onClick: handleDeleteOnUninstallToggle,
+            type: "button"
+        }, h("span", {
+            className: "rlcc-switch-knob"
+        }), h("span", {
+            className: "rlcc-switch-label"
+        }, deleteOnUninstall ? "On" : "Off")))));
         }
         if (loading) {
             return h("div", {
@@ -1004,27 +1158,11 @@
             className: "rlcc-oc-status rlcc-oc-status--" + ecResultStatus
         }, ecResultMessage), !ecWpConfigWritable && h("p", {
             className: "rlcc-oc-unavailable"
-        }, "wp-config.php doesn't look writable — if enabling doesn't take effect, add define('WP_CACHE', true); yourself near the top, right after the opening <?php tag."))), h("div", {
-            className: "rlcc-card-grid rlcc-footer-grid"
-        }, h("div", {
-            className: "rlcc-card rlcc-card--wide rlcc-card--danger"
-        }, h("h3", {
-            className: "rlcc-card-title rlcc-card-title--danger"
-        }, "Danger Zone"), h("div", {
-            className: "rlcc-danger-row"
-        }, h("div", {
-            className: "rlcc-danger-text"
-        }, h("label", null, "Delete all data on uninstall", h(InfoTip, {
-            text: "Off by default. When ON, removing this plugin from Plugins → Installed Plugins deletes all of its settings and cached files, and runs one last full-site cache clear in the background."
-        }))), h("button", {
-            className: "rlcc-switch rlcc-switch--danger " + (deleteOnUninstall ? "rlcc-switch--on" : "rlcc-switch--off"),
-            onClick: handleDeleteOnUninstallToggle,
-            type: "button"
-        }, h("span", {
-            className: "rlcc-switch-knob"
-        }), h("span", {
-            className: "rlcc-switch-label"
-        }, deleteOnUninstall ? "On" : "Off"))))), h(ToastList, {
+        }, "wp-config.php doesn't look writable — if enabling doesn't take effect, add define('WP_CACHE', true); yourself near the top, right after the opening <?php tag."))), h(ConfirmModal, {
+            modal: modal,
+            onCancel: closeModal,
+            onConfirm: acceptModal
+        }), h(ToastList, {
             toasts: toasts,
             remove: removeToast
         }));

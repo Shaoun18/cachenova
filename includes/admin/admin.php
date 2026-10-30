@@ -385,10 +385,18 @@ class RLCC_Admin {
 
 	public function add_admin_bar_button( $wp_admin_bar ) {
 		if ( ! current_user_can( 'manage_options' ) ) return;
+		// Inline SVG (CacheNova sparkle mark) so the button is recognisable on every admin and front-end page, with no extra CSS file.
+		$icon = '<span class="ab-icon" aria-hidden="true" style="display:inline-block;width:20px;height:20px;margin:-3px 6px 0 0;vertical-align:middle;float:none;">'
+			. '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" width="20" height="20" style="display:block;">'
+			. '<defs><linearGradient id="rlccAbGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8679fa"/><stop offset="1" stop-color="#4b3fd0"/></linearGradient></defs>'
+			. '<rect width="20" height="20" rx="5" fill="url(#rlccAbGrad)"/>'
+			. '<path fill="#fff" d="M10 3.6l1.5 4.3 4.3 1.5-4.3 1.5L10 15.2l-1.5-4.3-4.3-1.5 4.3-1.5z"/>'
+			. '</svg></span>';
 		$wp_admin_bar->add_node( [
 			'id'    => 'rlcc-clear-cache',
-			'title' => 'Clear Cache Now',
+			'title' => $icon . '<span class="ab-label">' . esc_html__( 'Clear Cache Now', 'cachenova' ) . '</span>',
 			'href'  => wp_nonce_url( admin_url( 'admin-post.php?action=rlcc_manual_clear' ), 'rlcc_manual_clear_action', 'rlcc_nonce' ),
+			'meta'  => [ 'title' => esc_attr__( 'CacheNova — clear all caches', 'cachenova' ) ],
 		] );
 	}
 

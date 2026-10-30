@@ -39,13 +39,34 @@ class RLCC_Divi_Integration {
 		}
 	}
 
+	/** Remove the entire Divi et-cache directory; never follow symbolic links. */
 	public function purge_et_cache_dir() {
 		$path = trailingslashit( WP_CONTENT_DIR ) . 'et-cache';
-		if ( is_dir( $path ) ) {
-			$this->plugin->recursive_clear_directory( $path );
-			$this->plugin->fs()->rmdir( $path );
-		}
+		clearstatcache( true, $path );
+		if ( ! file_exists( $path ) && ! is_link( $path ) ) return true;
+		if ( is_link( $path ) || ! is_dir( $path ) ) return false;
+		$root = realpath( WP_CONTENT_DIR );
+		$actual = realpath( $path );
+		if ( ! $root || ! $actual || dirname( $actual ) !== $root ) return false;
+		$remove = function ( $dir ) use ( &$remove ) {
+			$items = @scandir( $dir );
+			if ( false === $items ) return false;
+			$ok = true;
+			foreach ( $items as $name ) {
+				if ( '.' === $name || '..' === $name ) continue;
+				$item = $dir . DIRECTORY_SEPARATOR . $name;
+				if ( is_dir( $item ) && ! is_link( $item ) ) {
+					if ( ! $remove( $item ) ) $ok = false;
+				} elseif ( ! @unlink( $item ) ) $ok = false;
+			}
+			if ( ! @rmdir( $dir ) ) $ok = false;
+			return $ok;
+		};
+		$removed = $remove( $path );
+		clearstatcache( true, $path );
+		return $removed && ! file_exists( $path );
 	}
+
 }
 
 endif;

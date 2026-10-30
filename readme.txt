@@ -4,7 +4,7 @@ Tags: cache, performance, object cache, page cache, developer tools
 Requires at least: 7.0
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -99,3 +99,11 @@ The cache-plugin detection and general WordPress cache clearing work on any site
 
 = 1.0.0 =
 Initial public release.
+
+= Divi per-request cache purge =
+
+The optional Divi Cache Compatibility toggle is OFF by default. Turning it on deletes Divi et-cache after frontend requests. This can make sites slower and should only be used for troubleshooting. Existing third-party object-cache.php and advanced-cache.php drop-ins are never overwritten.
+
+= Why does CacheNova report another cache drop-in even without a cache plugin? =
+
+WordPress loads wp-content/object-cache.php and wp-content/advanced-cache.php independently of whether the plugin that created them is active. Hosting software and old installations may leave these files. CacheNova deliberately refuses to overwrite unknown drop-ins because replacing them can cause outages. Back up and identify their owner before switching.

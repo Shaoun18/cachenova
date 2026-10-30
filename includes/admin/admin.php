@@ -41,6 +41,12 @@ class RLCC_Admin {
 			],
 		] );
 
+		register_rest_route( RLCC_Cache_Cleaner::REST_NAMESPACE, '/divi-per-request', [
+			'methods' => 'POST',
+			'callback' => [ $this, 'rest_divi_per_request' ],
+			'permission_callback' => [ $this, 'rest_permissions' ],
+		] );
+
 		register_rest_route( RLCC_Cache_Cleaner::REST_NAMESPACE, '/object-cache/test', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'rest_test_object_cache' ],
@@ -60,6 +66,18 @@ class RLCC_Admin {
 		] );
 	}
 
+	public function rest_divi_per_request( $request ) {
+		$enabled = rest_sanitize_boolean( $request->get_param( 'enabled' ) );
+		$settings = $this->plugin->get_settings();
+		$settings['divi_per_request_purge'] = $enabled;
+		$this->plugin->update_settings_option( $settings );
+		$deleted = null;
+		if ( $enabled ) {
+			$deleted = $this->plugin->divi->purge_et_cache_dir();
+		}
+		return rest_ensure_response( [ 'enabled' => $enabled, 'folder_deleted' => $deleted ] );
+	}
+
 	public function rest_permissions() {
 		return current_user_can( 'manage_options' );
 	}
@@ -76,10 +94,13 @@ class RLCC_Admin {
 		$settings['object_cache_foreign_dropin']     = $this->plugin->drop_in->is_foreign_object_cache_dropin_present();
 		$settings['advanced_cache_dropin_active']    = $this->plugin->drop_in->is_our_advanced_cache_dropin_active();
 		$settings['advanced_cache_foreign_dropin']   = $this->plugin->drop_in->is_foreign_advanced_cache_dropin_present();
+		$settings['object_cache_dropin_details'] = $this->plugin->drop_in->describe_foreign_dropin( 'object-cache.php' );
+		$settings['advanced_cache_dropin_details'] = $this->plugin->drop_in->describe_foreign_dropin( 'advanced-cache.php' );
 		$settings['wp_cache_constant_true']          = $this->plugin->drop_in->is_wp_cache_constant_true();
 		$settings['wp_config_writable']              = $this->plugin->drop_in->wp_config_writable();
 		$settings['local_ssl_fix_active']            = has_filter( 'https_local_ssl_verify', '__return_false' );
 		$settings['divi_active']                     = $this->plugin->divi->is_active();
+        $settings['divi_per_request_purge'] = ! empty( $settings['divi_per_request_purge'] );
 		$settings['last_db_optimize']                = get_option( 'rlcc_last_db_optimize', null );
 		$settings['db_counts']                       = $this->get_database_counts();
 		return rest_ensure_response( $settings );
@@ -168,30 +189,21 @@ class RLCC_Admin {
 	}
 
 	public function rest_clear_cache( $request ) {
+		// Complete the purge before responding, so the dashboard reports the actual result.
 		$this->plugin->reschedule_cron();
-		$data = [
-			'cleared'                => true,
-			'last_cleared_timestamp' => time(),
-			'next_run_timestamp'     => wp_next_scheduled( RLCC_Cache_Cleaner::CRON_HOOK ),
-		];
-
-		if ( function_exists( 'fastcgi_finish_request' ) ) {
-			add_filter( 'rest_pre_serve_request', function ( $served, $result, $req, $server ) use ( $data ) {
-				if ( $served ) {
-					return $served;
-				}
-				status_header( 200 );
-				header( 'Content-Type: application/json; charset=' . get_option( 'blog_charset' ) );
-				echo wp_json_encode( $data );
-				fastcgi_finish_request();
-				$this->plugin->full_clear();
-				return true;
-			}, 10, 4 );
-			return rest_ensure_response( $data );
-		}
-
 		$this->plugin->full_clear();
-		return rest_ensure_response( $data );
+		$report = get_option( 'rlcc_last_clear_report', [] );
+		$divi_result = isset( $report['items']['divi_et_cache']['status'] ) ? $report['items']['divi_et_cache']['status'] : 'not_present';
+		return rest_ensure_response( [
+			'cleared'                => true,
+			'last_cleared_timestamp' => (int) get_option( 'rlcc_last_cleared', time() ),
+			'next_run_timestamp'     => wp_next_scheduled( RLCC_Cache_Cleaner::CRON_HOOK ),
+			'last_clear_report'      => $report,
+			'divi_folder_deleted'   => ! is_dir( trailingslashit( WP_CONTENT_DIR ) . 'et-cache' ),
+			'divi_folder_status'    => $divi_result,
+			'divi_folder_exists'    => is_dir( trailingslashit( WP_CONTENT_DIR ) . 'et-cache' ),
+			'divi_folder_message'   => is_dir( trailingslashit( WP_CONTENT_DIR ) . 'et-cache' ) ? 'Divi et-cache exists after the purge. It may have been recreated, or the web server lacks deletion permissions.' : 'Divi et-cache directory is absent after clearing.',
+		] );
 	}
 
 	public function optimize_database( $options ) {
@@ -234,8 +246,20 @@ class RLCC_Admin {
 		}
 
 		if ( ! empty( $options['expired_transients'] ) ) {
-			$count = (int) $wpdb->query( "DELETE a, b FROM {$wpdb->options} a, {$wpdb->options} b WHERE a.option_name LIKE '\_transient\_timeout\_%' AND b.option_name = CONCAT('_transient_', SUBSTRING(a.option_name, 20)) AND a.option_value < UNIX_TIMESTAMP()" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-			$report['expired_transients'] = max( 0, (int) ( $count / 2 ) ); 
+			// Use WordPress APIs so both database and external object-cache transients are handled safely.
+			$expired = $wpdb->get_col( $wpdb->prepare(
+				"SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND option_value < %d LIMIT 500",
+				$wpdb->esc_like( '_transient_timeout_' ) . '%', time()
+			) );
+			$deleted = 0;
+			foreach ( $expired as $name ) {
+				$key = substr( $name, strlen( '_transient_timeout_' ) );
+				if ( delete_transient( $key ) ) {
+					$deleted++;
+				}
+			}
+			$report['expired_transients'] = $deleted;
+			$report['expired_transients_batch_limit'] = 500;
 		}
 
 		if ( ! empty( $options['optimize_tables'] ) ) {
@@ -296,8 +320,8 @@ class RLCC_Admin {
 			return;
 		}
 
-		$css_file = 'assets/css/cn-admin.min.css';
-		$js_file  = 'assets/js/cn-admin.min.js';
+		$css_file = 'assets/css/cn-admin.css';
+		$js_file  = 'assets/js/cn-admin.js';
 
 		wp_enqueue_style(
 			'cn-admin-style',
@@ -310,7 +334,7 @@ class RLCC_Admin {
 			'cn-admin-script',
 			plugins_url( $js_file, RLCC_PLUGIN_FILE ),
 			[ 'wp-element', 'wp-api-fetch', 'wp-i18n' ],
-			RLCC_PLUGIN_VERSION,
+			filemtime( plugin_dir_path( RLCC_PLUGIN_FILE ) . $js_file ),
 			true
 		);
 

@@ -4,7 +4,7 @@
  * Plugin Name: CacheNova
  * Plugin URI:  https://wordpress.org/plugins/cachenova/
  * Description: Automatically clears and manages WordPress cache layers on a scheduled basis, helping keep the site fresh and optimized without impacting performance.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Requires at least: 7.0
  * Requires PHP:      8.0
  * Author:            shaounchandrashill
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'RLCC_PLUGIN_VERSION', '1.0.0' );
+define( 'RLCC_PLUGIN_VERSION', '1.1.0' );
 
 define( 'RLCC_PLUGIN_FILE', __FILE__ );
 
@@ -37,7 +37,7 @@ class RLCC_Cache_Cleaner {
 
 	const DEFERRED_HOOK = 'rlcc_deferred_full_clear_event';
 
-	const ALLOWED_INTERVALS = [ 1, 3, 5, 10, 20, 30, 60];
+	const ALLOWED_INTERVALS = [ 10, 20, 30, 60, 1440, 10080, 43200 ];
 
 	const PUBLIC_CACHE_DIR  = 'public';
 	const PRIVATE_CACHE_DIR = 'private';
@@ -87,6 +87,11 @@ class RLCC_Cache_Cleaner {
 		add_action( self::CRON_HOOK, [ $this, 'light_clear' ] );
 
 		add_action( 'save_post', [ $this, 'full_clear' ] );
+		add_action( 'deleted_post', [ $this, 'full_clear' ] );
+		add_action( 'trashed_post', [ $this, 'full_clear' ] );
+		add_action( 'untrashed_post', [ $this, 'full_clear' ] );
+		add_action( 'wp_update_nav_menu', [ $this, 'full_clear' ] );
+		add_action( 'update_option_theme_mods_' . get_stylesheet(), [ $this, 'full_clear' ] );
 		add_action( 'et_save_post', [ $this, 'full_clear' ] );
 		add_action( 'customize_save_after', [ $this, 'full_clear' ] );
 		add_action( 'switch_theme', [ $this, 'full_clear' ] );
@@ -110,12 +115,35 @@ class RLCC_Cache_Cleaner {
 		if ( $this->divi->is_active() ) {
 			add_action( 'init', [ $this->divi, 'disable_static_css' ], 20 );
 
-			add_action( 'shutdown', [ $this->divi, 'purge_et_cache_dir' ] );
+			// Opt-in only: expensive, and can reduce cache performance.
+            add_action( 'shutdown', [ $this, 'maybe_purge_divi_after_request' ], PHP_INT_MAX - 1 );
 		}
 		add_action( 'init', [ $this, 'maybe_run_overdue_clear' ] );
 
 		add_action( 'admin_post_rlcc_manual_clear', [ $this->admin, 'manual_clear_fallback' ] );
 		add_action( 'admin_bar_menu', [ $this->admin, 'add_admin_bar_button' ], 100 );
+	}
+
+	/** Optional compatibility mode; never run for admin, AJAX, REST, or cron requests. */
+	public function maybe_purge_divi_after_request() {
+		$settings = $this->get_settings();
+		if ( empty( $settings['divi_per_request_purge'] ) || ! $this->divi->is_active() || is_admin() || wp_doing_ajax() || wp_doing_cron() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
+			return;
+		}
+		// A short lock prevents concurrent requests repeatedly deleting the same folder.
+		$lock = trailingslashit( WP_CONTENT_DIR ) . 'cache/cachenova-divi-purge.lock';
+		$dir = dirname( $lock );
+		if ( ! is_dir( $dir ) ) { wp_mkdir_p( $dir ); }
+		if ( ! is_writable( $dir ) ) { return; }
+		$fp = @fopen( $lock, 'c' );
+		if ( ! $fp ) { return; }
+		if ( ! flock( $fp, LOCK_EX | LOCK_NB ) ) { fclose( $fp ); return; }
+		try {
+			$this->divi->purge_et_cache_dir();
+		} finally {
+			flock( $fp, LOCK_UN );
+			fclose( $fp );
+		}
 	}
 
 	private $settings_cache = null;
@@ -127,6 +155,7 @@ class RLCC_Cache_Cleaner {
 		$defaults = [
 			'interval_minutes' => 60,
 			'toast_enabled'    => true,
+            'divi_per_request_purge' => false,
 			
 			'cache_public'     => true,
 			'cache_private'    => true,
@@ -160,7 +189,7 @@ class RLCC_Cache_Cleaner {
 
 		$interval_minutes = in_array( (int) $interval_minutes, self::ALLOWED_INTERVALS, true )
 			? (int) $interval_minutes
-			: 5;
+			: 60;
 
 		$settings = array_merge( $current, [
 			'interval_minutes' => $interval_minutes,
@@ -197,7 +226,7 @@ class RLCC_Cache_Cleaner {
 		if ( $timestamp ) {
 			wp_unschedule_event( $timestamp, self::CRON_HOOK );
 		}
-		wp_schedule_event( time(), self::CRON_SCHEDULE_ID, self::CRON_HOOK );
+		wp_schedule_event( time() + max( 60, (int) $this->get_settings()['interval_minutes'] * 60 ), self::CRON_SCHEDULE_ID, self::CRON_HOOK );
 	}
 
 	private function maybe_fix_local_loopback_ssl() {
@@ -294,7 +323,7 @@ class RLCC_Cache_Cleaner {
 		
 		update_option( 'rlcc_installed_version', RLCC_PLUGIN_VERSION );
 		if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
-			wp_schedule_event( time(), self::CRON_SCHEDULE_ID, self::CRON_HOOK );
+			wp_schedule_event( time() + max( 60, (int) $this->get_settings()['interval_minutes'] * 60 ), self::CRON_SCHEDULE_ID, self::CRON_HOOK );
 		}
 		$this->divi->disable_static_css();
 		$this->divi->purge_et_cache_dir();
@@ -355,7 +384,7 @@ class RLCC_Cache_Cleaner {
 			return;
 		}
 		$settings = $this->get_settings();
-		$grace    = max( 60, (int) $settings['interval_minutes'] * 60 );
+		$grace    = max( 3600, (int) $settings['interval_minutes'] * 60 );
 		if ( time() < $next + $grace ) {
 			return; 
 		}
@@ -363,8 +392,8 @@ class RLCC_Cache_Cleaner {
 			return;
 		}
 		set_transient( 'rlcc_overdue_clear_lock', 1, 30 );
-		$this->light_clear();
-		$this->reschedule_cron();
+		// Do not run expensive cache/database work during a visitor request.
+		// WP-Cron will process the scheduled clear asynchronously.
 	}
 
 	public function light_clear() {
@@ -442,12 +471,25 @@ class RLCC_Cache_Cleaner {
 			$report['autoptimize'] = [ 'label' => 'Autoptimize', 'status' => 'triggered' ];
 		}
 
+		// Other cache integrations may regenerate Divi assets; remove the root last.
+		$divi_path = trailingslashit( WP_CONTENT_DIR ) . 'et-cache';
+		$divi_deleted = $this->divi->purge_et_cache_dir();
+		$report['divi_et_cache'] = [
+			'label'  => 'Divi et-cache folder',
+			'status' => $divi_deleted ? 'ok' : 'failed',
+		];
+
 		update_option( 'rlcc_asset_version', time() );
 		update_option( 'rlcc_last_clear_report', [ 'type' => 'full', 'items' => $report ] );
 		update_option( 'rlcc_last_cleared', time() );
 		update_option( 'rlcc_last_clear_type', 'full' );
 
 		do_action( 'rlcc_after_cache_clear' );
+		// Integrations triggered by this action may recreate et-cache; purge again.
+		$divi_deleted = $this->divi->purge_et_cache_dir();
+		clearstatcache( true, trailingslashit( WP_CONTENT_DIR ) . 'et-cache' );
+		$report['divi_et_cache']['status'] = ( $divi_deleted && ! is_dir( trailingslashit( WP_CONTENT_DIR ) . 'et-cache' ) ) ? 'ok' : 'failed';
+		update_option( 'rlcc_last_clear_report', [ 'type' => 'full', 'items' => $report ] );
 	}
 
 	public function recursive_clear_directory( $dir ) {
@@ -456,7 +498,7 @@ class RLCC_Cache_Cleaner {
 		foreach ( $items as $item ) {
 			if ( $item === '.' || $item === '..' ) continue;
 			$path = $dir . '/' . $item;
-			if ( is_dir( $path ) ) {
+			if ( is_dir( $path ) && ! is_link( $path ) ) {
 				$this->recursive_clear_directory( $path );
 				$this->fs()->rmdir( $path );
 			} else {

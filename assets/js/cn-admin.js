@@ -35,13 +35,13 @@
     apiFetch.use(apiFetch.createRootURLMiddleware(RLCC_DATA.restUrl));
     const NS = "/" + RLCC_DATA.namespace;
     const INTERVAL_LABELS = {
-        1: "1 minute",
-        3: "3 minutes",
-        5: "5 minutes",
         10: "10 minutes",
         20: "20 minutes",
         30: "30 minutes",
-        60: "1 hour"
+        60: "1 hour",
+        1440: "1 day",
+        10080: "7 days",
+        43200: "30 days (monthly)"
     };
     const OC_BACKEND_LABELS = {
         redis: "Redis",
@@ -182,6 +182,8 @@
         const [ecWpCacheTrue, setEcWpCacheTrue] = useState(false);
         const [localSslFixActive, setLocalSslFixActive] = useState(false);
         const [diviActive, setDiviActive] = useState(false);
+        const [diviPerRequest, setDiviPerRequest] = useState(false);
+        const [diviPurgeSaving, setDiviPurgeSaving] = useState(false);
         const [ecWpConfigWritable, setEcWpConfigWritable] = useState(true);
         const [ecSaving, setEcSaving] = useState(false);
         const [ecResultStatus, setEcResultStatus] = useState("idle");
@@ -223,7 +225,7 @@
         function pushToast(message, type) {
             if (!toastEnabledRef.current) return;
             const id = ++toastIdRef.current;
-            setToasts(prev => [ ...prev, {
+            setToasts([{
                 id: id,
                 message: message,
                 type: type
@@ -267,6 +269,7 @@
                 setEcWpConfigWritable(res.wp_config_writable !== false);
                 setLocalSslFixActive(!!res.local_ssl_fix_active);
                 setDiviActive(!!res.divi_active);
+                setDiviPerRequest(!!res.divi_per_request_purge);
                 setDbCounts(res.db_counts || {
                     revisions: 0,
                     trashed_posts: 0,
@@ -508,6 +511,7 @@
                 setEcWpCacheTrue(!!res.wp_cache_constant_true);
                 setLocalSslFixActive(!!res.local_ssl_fix_active);
                 setDiviActive(!!res.divi_active);
+                setDiviPerRequest(!!res.divi_per_request_purge);
                 const result = res.early_cache_result;
                 if (result) {
                     setEcResultStatus(result.success ? "ok" : "error");
@@ -521,6 +525,17 @@
                 const detail = err && (err.message || err.code) || "unknown error";
                 pushToast("Failed to save early-bypass cache settings: " + detail, "error");
             });
+        }
+        function toggleDiviPerRequest() {
+            if (diviPurgeSaving) return;
+            const enabled = !diviPerRequest;
+            if (enabled && !window.confirm("Warning: clearing Divi et-cache after every frontend request can significantly slow down your website. Enable only for troubleshooting?")) return;
+            setDiviPurgeSaving(true);
+            apiFetch({path: NS + "/divi-per-request", method: "POST", data: {enabled}}).then(res => {
+                setDiviPerRequest(!!res.enabled);
+                pushToast(res.enabled ? (res.folder_deleted ? "Divi et-cache folder deleted. Automatic deletion enabled." : "Divi setting enabled, but et-cache folder could not be deleted. Check filesystem permissions.") : "Divi Cache Compatibility disabled. No per-request folder deletion.", res.enabled && !res.folder_deleted ? "error" : "success");
+            }).catch(err => pushToast("Could not save Divi setting: " + (err.message || "Unknown error"), "error"))
+              .finally(() => setDiviPurgeSaving(false));
         }
         function toggleDbOption(key) {
             setDbOptions(prev => ({
@@ -568,7 +583,7 @@
                 setNextRun(res.next_run_timestamp);
                 reminderFiredForRef.current = null;
                 setClearing(false);
-                pushToast("Cache cleared successfully. Timer restarted.", "success");
+                pushToast(res.divi_folder_deleted === false ? (res.divi_folder_message || "Cache cleared, but Divi et-cache still exists.") : "Cache clear finished; Divi et-cache was absent at verification. Divi may recreate it. Timer restarted.", res.divi_folder_deleted === false ? "error" : "success");
                 if (res.last_clear_report) {
                     setLastClearReport(res.last_clear_report);
                 } else {
@@ -640,7 +655,7 @@
             className: "rlcc-hero-title-block"
         }, h("h2", {
             className: "rlcc-hero-title"
-        }, "CacheNova"), h("div", {
+        }, h("span", {className:"rlcc-brand-mark", "aria-hidden":"true"}, "✦"), "CacheNova", h("span", {className:"rlcc-version"}, "v1.1.0")), h("div", {
             className: "rlcc-status-pill"
         }, h("span", {
             className: "rlcc-status-dot"
@@ -658,15 +673,20 @@
             className: "rlcc-hero-meta-item"
         }, "Last cleared: ", h("strong", null, timeAgo(lastCleared))), diviActive ? h("div", {
             className: "rlcc-hero-meta-item rlcc-hero-meta-item--divi"
-        }, "🛡 Divi detected — et-cache folder purged continuously") : h("div", {
+        }, "Divi detected — cache cleared on updates and scheduled runs") : h("div", {
             className: "rlcc-hero-meta-item"
-        }, "✓ Works with any theme and plugin"))), h("div", {
+        }, "Works with WordPress themes — automatic cache clearing enabled"))), diviActive && h("div", {className:"rlcc-card rlcc-divi-compat"},
+            h("h3", {className:"rlcc-card-title"}, "Divi Cache Compatibility"),
+            h("p", null, "Delete the entire wp-content/et-cache folder immediately when enabled and after frontend requests. Divi may recreate it. Can significantly slow your site."),
+            h("button", {type:"button", className:"rlcc-switch " + (diviPerRequest ? "rlcc-switch--on" : "rlcc-switch--off"), onClick:toggleDiviPerRequest, disabled:diviPurgeSaving, "aria-pressed":diviPerRequest},
+                h("span", {className:"rlcc-switch-knob"}), h("span", {className:"rlcc-switch-label"}, diviPerRequest ? "On" : "Off"))
+        ), h("div", {
             className: "rlcc-card-grid"
         }, h("div", {
             className: "rlcc-card"
         }, h("h3", {
             className: "rlcc-card-title"
-        }, "Schedule & Notifications", h(InfoTip, {
+        }, h("span", {className:"rlcc-card-symbol", "aria-hidden":"true"}, "◷"), "Schedule & Notifications", h(InfoTip, {
             text: "Cache also clears instantly every time you save a page or post — Divi Builder, Gutenberg, or any other editor — no manual reload needed."
         })), h("div", {
             className: "rlcc-grid"
@@ -694,7 +714,7 @@
             className: "rlcc-card"
         }, h("h3", {
             className: "rlcc-card-title"
-        }, "Cache Types", h(InfoTip, {
+        }, h("span", {className:"rlcc-card-symbol", "aria-hidden":"true"}, "▦"), "Cache Types", h(InfoTip, {
             text: "Whatever you switch ON here gets stored; the timer above is what clears it back out again."
         })), h("div", {
             className: "rlcc-grid rlcc-grid--4"
@@ -742,15 +762,15 @@
             className: "rlcc-card rlcc-card--wide"
         }, h("h3", {
             className: "rlcc-card-title"
-        }, "Last Clear Report"), h(ClearReportCard)), h("div", {
+        }, h("span", {className:"rlcc-card-symbol", "aria-hidden":"true"}, "▤"), "Last Clear Report"), h(ClearReportCard)), h("div", {
             className: "rlcc-card"
         }, h("h3", {
             className: "rlcc-card-title"
-        }, "Persistent Object Cache", h(InfoTip, {
+        }, h("span", {className:"rlcc-card-symbol", "aria-hidden":"true"}, "◇"), "Persistent Object Cache", h(InfoTip, {
             text: "A persistent object cache lets WordPress reuse database query results across requests. Off by default. Turning it on automatically detects and uses the fastest backend this server actually has working — Redis, then Memcached, then APCu, then a universal file-based fallback — with no manual picking or testing required."
         })), ocForeignDropin && h("p", {
             className: "rlcc-oc-unavailable"
-        }, "A different object-cache.php already exists in wp-content/ — remove it first if you want this plugin to manage the persistent object cache."), h("div", {
+        }, "An existing object-cache.php is already installed (possibly by the host or an inactive plugin). CacheNova will not overwrite it. Identify its owner and back it up before switching cache providers."), h("div", {
             className: "rlcc-field"
         }, h("label", null, "Enable (" + (ocDropinActive ? "drop-in active" : "not active") + ")"), h("button", {
             className: "rlcc-switch " + (ocEnabled ? "rlcc-switch--on" : "rlcc-switch--off"),
@@ -822,11 +842,11 @@
             className: "rlcc-card"
         }, h("h3", {
             className: "rlcc-card-title"
-        }, "Early-Bypass Page Cache", h(InfoTip, {
+        }, h("span", {className:"rlcc-card-symbol", "aria-hidden":"true"}, "⚡"), "Early-Bypass Page Cache", h(InfoTip, {
             text: "Serves cached pages before WordPress even loads. Only anonymous, cookie-free visitors; everyone else gets Private Cache instead. This is what actually improves server response time (TTFB) on speed tests."
         })), ecForeignDropin && h("p", {
             className: "rlcc-oc-unavailable"
-        }, "A different advanced-cache.php already exists in wp-content/ — remove it first if you want this plugin to manage early-bypass caching."), !cachePublic && !ecEnabled && h("p", {
+        }, "An existing advanced-cache.php is already installed (possibly by the host or an inactive plugin). CacheNova will not overwrite it. Identify its owner and back it up before switching cache providers."), !cachePublic && !ecEnabled && h("p", {
             className: "rlcc-oc-unavailable"
         }, "Turn on Public Cache first — early-bypass caching serves the same cached files, just before WordPress loads."), h("div", {
             className: "rlcc-field"

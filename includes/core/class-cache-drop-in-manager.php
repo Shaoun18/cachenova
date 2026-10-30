@@ -11,6 +11,20 @@ class RLCC_Cache_Drop_In_Manager {
 		$this->plugin = $plugin;
 	}
 
+	/** Report existing drop-ins without overwriting third-party code or exposing secrets. */
+	public function describe_foreign_dropin( $filename ) {
+		if ( ! in_array( $filename, [ 'object-cache.php', 'advanced-cache.php' ], true ) ) return 'Unknown file';
+		$path = trailingslashit( WP_CONTENT_DIR ) . $filename;
+		if ( ! is_file( $path ) ) return 'No drop-in found';
+		$head = @file_get_contents( $path, false, null, 0, 2048 );
+		if ( false === $head ) return 'Drop-in exists but cannot be read';
+		if ( false !== stripos( $head, 'LiteSpeed' ) ) return 'Existing LiteSpeed drop-in';
+		if ( false !== stripos( $head, 'Redis' ) ) return 'Existing Redis drop-in';
+		if ( false !== stripos( $head, 'W3 Total Cache' ) ) return 'Existing W3 Total Cache drop-in';
+		if ( false !== stripos( $head, 'WP Rocket' ) ) return 'Existing WP Rocket drop-in';
+		return 'Existing WordPress drop-in (owner not identified)';
+	}
+
 	public function detect_available_object_cache_backends() {
 		return [
 			'apcu'      => function_exists( 'apcu_fetch' ) && function_exists( 'apcu_store' ),

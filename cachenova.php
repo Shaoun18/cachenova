@@ -131,6 +131,8 @@ class RLCC_Cache_Cleaner {
 
 		add_action( 'admin_post_rlcc_manual_clear', [ $this->admin, 'manual_clear_fallback' ] );
 		add_action( 'admin_bar_menu', [ $this->admin, 'add_admin_bar_button' ], 100 );
+		add_action( 'admin_enqueue_scripts', [ $this->admin, 'enqueue_admin_bar_assets' ] );
+		add_action( 'wp_enqueue_scripts', [ $this->admin, 'enqueue_admin_bar_assets' ] );
 	}
 
 	/** Optional compatibility mode; never run for admin, AJAX, REST, or cron requests. */

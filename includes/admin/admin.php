@@ -383,12 +383,97 @@ class RLCC_Admin {
 		exit;
 	}
 
+	/**
+	 * Top-bar "Clear Cache Now": spinning icon + toast, without a page reload.
+	 * The link keeps its normal href, so it still works as a plain fallback if JavaScript fails.
+	 */
+	public function enqueue_admin_bar_assets() {
+		if ( ! is_admin_bar_showing() || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		$settings = $this->plugin->get_settings();
+
+		$css = '#wpadminbar .rlcc-ab-star{transform-box:fill-box;transform-origin:center;animation:rlccAbSpin 6s linear infinite}'
+			. '#wpadminbar #wp-admin-bar-rlcc-clear-cache.rlcc-is-clearing .rlcc-ab-star{animation-duration:.6s}'
+			. '#wpadminbar #wp-admin-bar-rlcc-clear-cache.rlcc-is-clearing>.ab-item{opacity:.85;cursor:progress}'
+			. '@keyframes rlccAbSpin{to{transform:rotate(360deg)}}'
+			. '@media (prefers-reduced-motion:reduce){#wpadminbar .rlcc-ab-star{animation:none}}'
+			. '.rlcc-bar-toast{position:fixed;top:48px;right:20px;z-index:999999;display:flex;align-items:center;gap:10px;max-width:min(380px,calc(100vw - 32px));padding:13px 18px;border-radius:12px;background:#fff;color:#18223b;font:600 13.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;border:1px solid #e7eaf2;border-left:4px solid #635bdf;box-shadow:0 12px 35px rgba(20,27,55,.2);cursor:pointer;animation:rlccBarToastIn .22s ease}'
+			. '.rlcc-bar-toast--success{border-left-color:#1f9d63}.rlcc-bar-toast--error{border-left-color:#c0392b}'
+			. '.rlcc-bar-toast-icon{flex:none;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff;background:#635bdf}'
+			. '.rlcc-bar-toast--success .rlcc-bar-toast-icon{background:#1f9d63}.rlcc-bar-toast--error .rlcc-bar-toast-icon{background:#c0392b}'
+			. '.rlcc-bar-toast.rlcc-bar-toast--out{opacity:0;transform:translateY(-6px);transition:opacity .25s ease,transform .25s ease}'
+			. '@keyframes rlccBarToastIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}'
+			. '@media(max-width:782px){.rlcc-bar-toast{top:54px;right:12px}}'
+			. '@media (prefers-reduced-motion:reduce){.rlcc-bar-toast{animation:none}}';
+		wp_register_style( 'cachenova-adminbar', false, [], RLCC_PLUGIN_VERSION );
+		wp_enqueue_style( 'cachenova-adminbar' );
+		wp_add_inline_style( 'cachenova-adminbar', $css );
+
+		$config = [
+			'url'          => esc_url_raw( rest_url( RLCC_Cache_Cleaner::REST_NAMESPACE . '/clear' ) ),
+			'nonce'        => wp_create_nonce( 'wp_rest' ),
+			'toast'        => ! empty( $settings['toast_enabled'] ),
+			'msgOk'        => __( 'All theme & plugin caches cleared.', 'cachenova' ),
+			'msgDone'      => __( 'Cache cleared.', 'cachenova' ),
+			'msgFail'      => __( 'Could not clear the cache. Please try again.', 'cachenova' ),
+			'msgDivi'      => __( 'Cache cleared, but the Divi et-cache folder still exists.', 'cachenova' ),
+			'msgWorking'   => __( 'Clearing cache…', 'cachenova' ),
+		];
+		$js = <<<'JS'
+(function(){
+	var C = window.RLCC_BAR; if (!C) return;
+	function toast(msg, type){
+		if (!C.toast) return;
+		var old = document.querySelector('.rlcc-bar-toast'); if (old) old.remove();
+		var t = document.createElement('div');
+		t.className = 'rlcc-bar-toast rlcc-bar-toast--' + (type || 'info');
+		t.setAttribute('role', 'status');
+		var i = document.createElement('span'); i.className = 'rlcc-bar-toast-icon';
+		i.textContent = type === 'success' ? '\u2713' : (type === 'error' ? '\u2715' : 'i');
+		var m = document.createElement('span'); m.textContent = msg;
+		t.appendChild(i); t.appendChild(m); document.body.appendChild(t);
+		var close = function(){ t.classList.add('rlcc-bar-toast--out'); setTimeout(function(){ t.remove(); }, 260); };
+		t.addEventListener('click', close); setTimeout(close, 3500);
+	}
+	function init(){
+		var node = document.getElementById('wp-admin-bar-rlcc-clear-cache'); if (!node) return;
+		var link = node.querySelector('a'); if (!link) return;
+		var busy = false;
+		// Fallback path (JS-less click that reloaded the page): confirm it with a toast, then tidy the URL.
+		if (/[?&]cleared=1/.test(window.location.search)) {
+			toast(C.msgOk, 'success');
+			try { var u = new URL(window.location.href); u.searchParams.delete('cleared'); window.history.replaceState(null, '', u.toString()); } catch (e) {}
+		}
+		link.addEventListener('click', function(e){
+			e.preventDefault();
+			if (busy) return;
+			busy = true; node.classList.add('rlcc-is-clearing'); toast(C.msgWorking, 'info');
+			fetch(C.url, { method: 'POST', credentials: 'same-origin', headers: { 'X-WP-Nonce': C.nonce, 'Content-Type': 'application/json' }, body: '{}' })
+				.then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+				.then(function(res){
+					if (res && res.divi_folder_deleted === false) { toast(C.msgDivi, 'error'); }
+					else { toast(C.msgOk, 'success'); }
+				})
+				.catch(function(){ toast(C.msgFail, 'error'); })
+				.then(function(){ busy = false; node.classList.remove('rlcc-is-clearing'); });
+		});
+	}
+	if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+})();
+JS;
+		wp_register_script( 'cachenova-adminbar', false, [], RLCC_PLUGIN_VERSION, true );
+		wp_enqueue_script( 'cachenova-adminbar' );
+		wp_add_inline_script( 'cachenova-adminbar', 'window.RLCC_BAR=' . wp_json_encode( $config ) . ';', 'before' );
+		wp_add_inline_script( 'cachenova-adminbar', $js );
+	}
+
 	public function add_admin_bar_button( $wp_admin_bar ) {
 		if ( ! current_user_can( 'manage_options' ) ) return;
 		// Inline SVG (CacheNova sparkle mark) so the button is recognisable on every admin and front-end page, with no extra CSS file.
-		$icon = '<span class="ab-icon" aria-hidden="true" style="display:inline-block;width:22px;height:22px;margin:-4px 7px 0 0;padding:0;vertical-align:middle;float:none;background:#7c6cf5;border-radius:6px;line-height:0;">'
-			. '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22" style="display:block;">'
-			. '<path fill="#ffffff" d="M11 3.8l1.7 4.7 4.7 1.7-4.7 1.7L11 16.6l-1.7-4.7-4.7-1.7 4.7-1.7z"/>'
+		$icon = '<span class="ab-icon rlcc-ab-icon" aria-hidden="true" style="display:inline-block;width:22px;height:22px;margin:-4px 7px 0 0;padding:0;vertical-align:middle;float:none;background:#7c6cf5;border-radius:6px;line-height:0;">'
+			. '<svg class="rlcc-ab-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22" style="display:block;">'
+			. '<g class="rlcc-ab-star"><path fill="#ffffff" d="M11 3.8l1.7 4.7 4.7 1.7-4.7 1.7L11 16.6l-1.7-4.7-4.7-1.7 4.7-1.7z"/></g>'
 			. '<circle cx="16.6" cy="5.4" r="1.2" fill="#ffd86b"/>'
 			. '</svg></span>';
 		$wp_admin_bar->add_node( [

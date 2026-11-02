@@ -393,11 +393,7 @@ class RLCC_Admin {
 		}
 		$settings = $this->plugin->get_settings();
 
-		$css = '#wpadminbar .rlcc-ab-star{transform-box:fill-box;transform-origin:center;animation:rlccAbSpin 6s linear infinite}'
-			. '#wpadminbar #wp-admin-bar-rlcc-clear-cache.rlcc-is-clearing .rlcc-ab-star{animation-duration:.6s}'
-			. '#wpadminbar #wp-admin-bar-rlcc-clear-cache.rlcc-is-clearing>.ab-item{opacity:.85;cursor:progress}'
-			. '@keyframes rlccAbSpin{to{transform:rotate(360deg)}}'
-			. '@media (prefers-reduced-motion:reduce){#wpadminbar .rlcc-ab-star{animation:none}}'
+		$css = '#wpadminbar #wp-admin-bar-rlcc-clear-cache.rlcc-is-clearing>.ab-item{opacity:.85;cursor:progress}'
 			. '.rlcc-bar-toast{position:fixed;top:48px;right:20px;z-index:999999;display:flex;align-items:center;gap:10px;max-width:min(380px,calc(100vw - 32px));padding:13px 18px;border-radius:12px;background:#fff;color:#18223b;font:600 13.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;border:1px solid #e7eaf2;border-left:4px solid #635bdf;box-shadow:0 12px 35px rgba(20,27,55,.2);cursor:pointer;animation:rlccBarToastIn .22s ease}'
 			. '.rlcc-bar-toast--success{border-left-color:#1f9d63}.rlcc-bar-toast--error{border-left-color:#c0392b}'
 			. '.rlcc-bar-toast-icon{flex:none;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff;background:#635bdf}'
@@ -440,6 +436,9 @@ class RLCC_Admin {
 		var node = document.getElementById('wp-admin-bar-rlcc-clear-cache'); if (!node) return;
 		var link = node.querySelector('a'); if (!link) return;
 		var busy = false;
+		var spin = node.querySelector('animateTransform');
+		function setSpin(sec){ if (spin) { spin.setAttribute('dur', sec + 's'); } }
+		if (spin && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { spin.parentNode.removeChild(spin); spin = null; }
 		// Fallback path (JS-less click that reloaded the page): confirm it with a toast, then tidy the URL.
 		if (/[?&]cleared=1/.test(window.location.search)) {
 			toast(C.msgOk, 'success');
@@ -448,7 +447,7 @@ class RLCC_Admin {
 		link.addEventListener('click', function(e){
 			e.preventDefault();
 			if (busy) return;
-			busy = true; node.classList.add('rlcc-is-clearing'); toast(C.msgWorking, 'info');
+			busy = true; setSpin(0.6); node.classList.add('rlcc-is-clearing'); toast(C.msgWorking, 'info');
 			fetch(C.url, { method: 'POST', credentials: 'same-origin', headers: { 'X-WP-Nonce': C.nonce, 'Content-Type': 'application/json' }, body: '{}' })
 				.then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
 				.then(function(res){
@@ -456,7 +455,7 @@ class RLCC_Admin {
 					else { toast(C.msgOk, 'success'); }
 				})
 				.catch(function(){ toast(C.msgFail, 'error'); })
-				.then(function(){ busy = false; node.classList.remove('rlcc-is-clearing'); });
+				.then(function(){ busy = false; setSpin(4); node.classList.remove('rlcc-is-clearing'); });
 		});
 	}
 	if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
@@ -473,7 +472,7 @@ JS;
 		// Inline SVG (CacheNova sparkle mark) so the button is recognisable on every admin and front-end page, with no extra CSS file.
 		$icon = '<span class="ab-icon rlcc-ab-icon" aria-hidden="true" style="display:inline-block;width:22px;height:22px;margin:-4px 7px 0 0;padding:0;vertical-align:middle;float:none;background:#7c6cf5;border-radius:6px;line-height:0;">'
 			. '<svg class="rlcc-ab-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22" style="display:block;">'
-			. '<g class="rlcc-ab-star"><path fill="#ffffff" d="M11 3.8l1.7 4.7 4.7 1.7-4.7 1.7L11 16.6l-1.7-4.7-4.7-1.7 4.7-1.7z"/></g>'
+			. '<g class="rlcc-ab-star"><path fill="#ffffff" d="M11 3.8l1.7 4.7 4.7 1.7-4.7 1.7L11 16.6l-1.7-4.7-4.7-1.7 4.7-1.7z"/><animateTransform attributeName="transform" type="rotate" from="0 11 10.2" to="360 11 10.2" dur="4s" repeatCount="indefinite"/></g>'
 			. '<circle cx="16.6" cy="5.4" r="1.2" fill="#ffd86b"/>'
 			. '</svg></span>';
 		$wp_admin_bar->add_node( [

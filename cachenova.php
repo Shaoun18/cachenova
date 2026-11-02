@@ -1,9 +1,9 @@
 <?php
 
 /**
- * Plugin Name: CacheNova
+ * Plugin Name: CacheNova – Auto Clear Cache, Browser Cache & Database Optimizer
  * Plugin URI:  https://wordpress.org/plugins/cachenova/
- * Description: Automatically clears and manages WordPress cache layers on a scheduled basis, helping keep the site fresh and optimized without impacting performance.
+ * Description: Auto clear cache on a schedule or on save. Clear browser, page and object cache, plus database optimization. Works with Divi, Elementor, WooCommerce.
  * Version: 1.1.0
  * Requires at least: 7.0
  * Requires PHP:      8.0
@@ -116,6 +116,8 @@ class RLCC_Cache_Cleaner {
 		add_action( 'shutdown', [ $this, 'close_page_cache_buffer' ], PHP_INT_MAX );
 
 		add_action( 'send_headers', [ $this, 'maybe_send_browser_cache_headers' ] );
+		add_filter( 'style_loader_src', [ $this, 'bust_browser_cache_src' ], 20 );
+		add_filter( 'script_loader_src', [ $this, 'bust_browser_cache_src' ], 20 );
 
 		add_action( 'admin_menu', [ $this->admin, 'add_settings_page' ] );
 		add_action( 'admin_enqueue_scripts', [ $this->admin, 'enqueue_admin_assets' ] );
@@ -820,6 +822,29 @@ class RLCC_Cache_Cleaner {
 		return true;
 	}
 
+	/**
+	 * Browser cache clear: after every cache clear the stored asset version changes, and this adds it to the
+	 * URLs of this site's own CSS/JS files so visitors' browsers download fresh copies. Opt-in; front end only.
+	 */
+	public function bust_browser_cache_src( $src ) {
+		if ( is_admin() || ! is_string( $src ) || '' === $src ) {
+			return $src;
+		}
+		$settings = $this->get_settings();
+		if ( empty( $settings['cache_browser'] ) ) {
+			return $src;
+		}
+		$version = (int) get_option( 'rlcc_asset_version', 0 );
+		if ( $version < 1 ) {
+			return $src;
+		}
+		$src_host = wp_parse_url( $src, PHP_URL_HOST );
+		if ( $src_host && strtolower( $src_host ) !== strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) ) ) {
+			return $src; // Only this site's own files; never third-party URLs.
+		}
+		return add_query_arg( 'rlcc_v', $version, $src );
+	}
+
 	public function maybe_send_browser_cache_headers() {
 		if ( is_admin() || headers_sent() ) {
 			return;
@@ -829,6 +854,20 @@ class RLCC_Cache_Cleaner {
 		}
 		$settings = $this->get_settings();
 		if ( empty( $settings['cache_browser'] ) ) {
+			return;
+		}
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : 'GET';
+		if ( ! in_array( $method, [ 'GET', 'HEAD' ], true ) ) {
+			return;
+		}
+		// Never let browsers or proxies store personal, dynamic or private pages.
+		if ( is_user_logged_in() || ( defined( 'DONOTCACHEPAGE' ) && DONOTCACHEPAGE ) ) {
+			return;
+		}
+		if ( is_404() || is_search() || is_preview() || is_customize_preview() || ( is_singular() && post_password_required() ) ) {
+			return;
+		}
+		if ( function_exists( 'is_cart' ) && ( is_cart() || is_checkout() || ( function_exists( 'is_account_page' ) && is_account_page() ) ) ) {
 			return;
 		}
 		$max_age = max( 60, (int) $settings['interval_minutes'] * 60 );

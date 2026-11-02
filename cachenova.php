@@ -1,10 +1,10 @@
 <?php
 
 /**
- * Plugin Name: CacheNova
+ * Plugin Name: CacheNova – Auto Clear Cache, Browser Cache & Database Optimizer
  * Plugin URI:  https://wordpress.org/plugins/cachenova/
- * Description: Automatically clears and manages WordPress cache layers on a scheduled basis, helping keep the site fresh and optimized without impacting performance.
- * Version: 1.0.0
+ * Description: Auto clear cache on a schedule or on save. Clear browser, page and object cache, plus database optimization. Works with Divi, Elementor, WooCommerce.
+ * Version: 1.1.0
  * Requires at least: 7.0
  * Requires PHP:      8.0
  * Author:            shaounchandrashill
@@ -17,7 +17,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'RLCC_PLUGIN_VERSION', '1.0.0' );
+define( 'RLCC_PLUGIN_VERSION', '1.1.0' );
 
 define( 'RLCC_PLUGIN_FILE', __FILE__ );
 
@@ -37,7 +37,14 @@ class RLCC_Cache_Cleaner {
 
 	const DEFERRED_HOOK = 'rlcc_deferred_full_clear_event';
 
-	const ALLOWED_INTERVALS = [ 1, 3, 5, 10, 20, 30, 60];
+	const ALLOWED_INTERVALS = [ 10, 20, 30, 60, 1440, 10080, 43200 ];
+
+	const DB_CRON_HOOK        = 'rlcc_db_optimize_event';
+	const DB_SCHEDULES        = [
+		'daily'   => 86400,
+		'weekly'  => 604800,
+		'monthly' => 2592000,
+	];
 
 	const PUBLIC_CACHE_DIR  = 'public';
 	const PRIVATE_CACHE_DIR = 'private';
@@ -85,8 +92,15 @@ class RLCC_Cache_Cleaner {
 		add_filter( 'cron_schedules', [ $this, 'add_custom_interval' ] );
 
 		add_action( self::CRON_HOOK, [ $this, 'light_clear' ] );
+		add_action( self::DB_CRON_HOOK, [ $this, 'run_scheduled_db_optimize' ] );
+		add_action( 'init', [ $this, 'sync_db_cron' ], 30 );
 
 		add_action( 'save_post', [ $this, 'full_clear' ] );
+		add_action( 'deleted_post', [ $this, 'full_clear' ] );
+		add_action( 'trashed_post', [ $this, 'full_clear' ] );
+		add_action( 'untrashed_post', [ $this, 'full_clear' ] );
+		add_action( 'wp_update_nav_menu', [ $this, 'full_clear' ] );
+		add_action( 'update_option_theme_mods_' . get_stylesheet(), [ $this, 'full_clear' ] );
 		add_action( 'et_save_post', [ $this, 'full_clear' ] );
 		add_action( 'customize_save_after', [ $this, 'full_clear' ] );
 		add_action( 'switch_theme', [ $this, 'full_clear' ] );
@@ -102,6 +116,8 @@ class RLCC_Cache_Cleaner {
 		add_action( 'shutdown', [ $this, 'close_page_cache_buffer' ], PHP_INT_MAX );
 
 		add_action( 'send_headers', [ $this, 'maybe_send_browser_cache_headers' ] );
+		add_filter( 'style_loader_src', [ $this, 'bust_browser_cache_src' ], 20 );
+		add_filter( 'script_loader_src', [ $this, 'bust_browser_cache_src' ], 20 );
 
 		add_action( 'admin_menu', [ $this->admin, 'add_settings_page' ] );
 		add_action( 'admin_enqueue_scripts', [ $this->admin, 'enqueue_admin_assets' ] );
@@ -110,12 +126,37 @@ class RLCC_Cache_Cleaner {
 		if ( $this->divi->is_active() ) {
 			add_action( 'init', [ $this->divi, 'disable_static_css' ], 20 );
 
-			add_action( 'shutdown', [ $this->divi, 'purge_et_cache_dir' ] );
+			// Opt-in only: expensive, and can reduce cache performance.
+            add_action( 'shutdown', [ $this, 'maybe_purge_divi_after_request' ], PHP_INT_MAX - 1 );
 		}
 		add_action( 'init', [ $this, 'maybe_run_overdue_clear' ] );
 
 		add_action( 'admin_post_rlcc_manual_clear', [ $this->admin, 'manual_clear_fallback' ] );
 		add_action( 'admin_bar_menu', [ $this->admin, 'add_admin_bar_button' ], 100 );
+		add_action( 'admin_enqueue_scripts', [ $this->admin, 'enqueue_admin_bar_assets' ] );
+		add_action( 'wp_enqueue_scripts', [ $this->admin, 'enqueue_admin_bar_assets' ] );
+	}
+
+	/** Optional compatibility mode; never run for admin, AJAX, REST, or cron requests. */
+	public function maybe_purge_divi_after_request() {
+		$settings = $this->get_settings();
+		if ( empty( $settings['divi_per_request_purge'] ) || ! $this->divi->is_active() || is_admin() || wp_doing_ajax() || wp_doing_cron() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
+			return;
+		}
+		// A short lock prevents concurrent requests repeatedly deleting the same folder.
+		$lock = trailingslashit( WP_CONTENT_DIR ) . 'cache/cachenova-divi-purge.lock';
+		$dir = dirname( $lock );
+		if ( ! is_dir( $dir ) ) { wp_mkdir_p( $dir ); }
+		if ( ! is_writable( $dir ) ) { return; }
+		$fp = @fopen( $lock, 'c' );
+		if ( ! $fp ) { return; }
+		if ( ! flock( $fp, LOCK_EX | LOCK_NB ) ) { fclose( $fp ); return; }
+		try {
+			$this->divi->purge_et_cache_dir();
+		} finally {
+			flock( $fp, LOCK_UN );
+			fclose( $fp );
+		}
 	}
 
 	private $settings_cache = null;
@@ -127,6 +168,7 @@ class RLCC_Cache_Cleaner {
 		$defaults = [
 			'interval_minutes' => 60,
 			'toast_enabled'    => true,
+            'divi_per_request_purge' => false,
 			
 			'cache_public'     => true,
 			'cache_private'    => true,
@@ -134,6 +176,8 @@ class RLCC_Cache_Cleaner {
 			'cache_browser'    => false,
 			
 			'delete_data_on_uninstall' => false,
+
+			'db_schedule'      => 'off',
 			
 			'object_cache_enabled'        => false,
 			'object_cache_backend'        => 'apcu',
@@ -155,12 +199,12 @@ class RLCC_Cache_Cleaner {
 		return $settings;
 	}
 
-	public function save_settings( $interval_minutes, $toast_enabled, $cache_public = null, $cache_private = null, $cache_object = null, $cache_browser = null, $delete_data_on_uninstall = null ) {
+	public function save_settings( $interval_minutes, $toast_enabled, $cache_public = null, $cache_private = null, $cache_object = null, $cache_browser = null, $delete_data_on_uninstall = null, $db_schedule = null ) {
 		$current = $this->get_settings();
 
 		$interval_minutes = in_array( (int) $interval_minutes, self::ALLOWED_INTERVALS, true )
 			? (int) $interval_minutes
-			: 5;
+			: 60;
 
 		$settings = array_merge( $current, [
 			'interval_minutes' => $interval_minutes,
@@ -172,9 +216,17 @@ class RLCC_Cache_Cleaner {
 			'delete_data_on_uninstall' => null === $delete_data_on_uninstall
 				? (bool) $current['delete_data_on_uninstall']
 				: (bool) $delete_data_on_uninstall,
+			'db_schedule'      => null === $db_schedule ? $this->sanitize_db_schedule( $current['db_schedule'] ) : $this->sanitize_db_schedule( $db_schedule ),
 		] );
 		$this->update_settings_option( $settings );
-		$this->reschedule_cron();
+
+		// Only restart the cache-clear timer when the interval really changed (or nothing is scheduled).
+		if ( (int) $current['interval_minutes'] !== $interval_minutes || ! wp_next_scheduled( self::CRON_HOOK ) ) {
+			$this->reschedule_cron();
+		}
+		if ( $current['db_schedule'] !== $settings['db_schedule'] ) {
+			$this->reschedule_db_cron();
+		}
 
 		if ( $current['cache_public'] && ! $settings['cache_public'] ) {
 			$this->purge_page_cache( self::PUBLIC_CACHE_DIR );
@@ -197,7 +249,52 @@ class RLCC_Cache_Cleaner {
 		if ( $timestamp ) {
 			wp_unschedule_event( $timestamp, self::CRON_HOOK );
 		}
-		wp_schedule_event( time(), self::CRON_SCHEDULE_ID, self::CRON_HOOK );
+		wp_schedule_event( time() + max( 60, (int) $this->get_settings()['interval_minutes'] * 60 ), self::CRON_SCHEDULE_ID, self::CRON_HOOK );
+	}
+
+	public function sanitize_db_schedule( $value ) {
+		$value = sanitize_key( (string) $value );
+		return isset( self::DB_SCHEDULES[ $value ] ) ? $value : 'off';
+	}
+
+	/** (Re)create the automatic database optimization event for the saved schedule. */
+	public function reschedule_db_cron() {
+		wp_clear_scheduled_hook( self::DB_CRON_HOOK );
+		$schedule = $this->sanitize_db_schedule( $this->get_settings()['db_schedule'] );
+		if ( 'off' === $schedule ) {
+			return;
+		}
+		wp_schedule_event( time() + self::DB_SCHEDULES[ $schedule ], 'rlcc_db_' . $schedule, self::DB_CRON_HOOK );
+	}
+
+	/** Keep the cron event in step with the saved setting (covers upgrades, restored sites, cleared cron tables). */
+	public function sync_db_cron() {
+		$schedule = $this->sanitize_db_schedule( $this->get_settings()['db_schedule'] );
+		$next     = wp_next_scheduled( self::DB_CRON_HOOK );
+		if ( 'off' === $schedule ) {
+			if ( $next ) {
+				wp_clear_scheduled_hook( self::DB_CRON_HOOK );
+			}
+			return;
+		}
+		if ( ! $next ) {
+			$this->reschedule_db_cron();
+		}
+	}
+
+	/** Automatic run: clears ALL selectable data types and optimizes tables. */
+	public function run_scheduled_db_optimize() {
+		if ( 'off' === $this->sanitize_db_schedule( $this->get_settings()['db_schedule'] ) ) {
+			return;
+		}
+		$this->admin->optimize_database( [
+			'revisions'          => true,
+			'trashed_posts'      => true,
+			'spam_comments'      => true,
+			'trashed_comments'   => true,
+			'expired_transients' => true,
+			'optimize_tables'    => true,
+		], 'auto' );
 	}
 
 	private function maybe_fix_local_loopback_ssl() {
@@ -229,6 +326,9 @@ class RLCC_Cache_Cleaner {
 			'interval' => $minutes * 60,
 			'display'  => sprintf( 'Every %d Minute(s) (CacheNova)', $minutes ),
 		];
+		$schedules['rlcc_db_daily']   = [ 'interval' => self::DB_SCHEDULES['daily'],   'display' => 'Every 1 day (CacheNova database)' ];
+		$schedules['rlcc_db_weekly']  = [ 'interval' => self::DB_SCHEDULES['weekly'],  'display' => 'Every 7 days (CacheNova database)' ];
+		$schedules['rlcc_db_monthly'] = [ 'interval' => self::DB_SCHEDULES['monthly'], 'display' => 'Every month (CacheNova database)' ];
 		return $schedules;
 	}
 
@@ -294,10 +394,11 @@ class RLCC_Cache_Cleaner {
 		
 		update_option( 'rlcc_installed_version', RLCC_PLUGIN_VERSION );
 		if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
-			wp_schedule_event( time(), self::CRON_SCHEDULE_ID, self::CRON_HOOK );
+			wp_schedule_event( time() + max( 60, (int) $this->get_settings()['interval_minutes'] * 60 ), self::CRON_SCHEDULE_ID, self::CRON_HOOK );
 		}
 		$this->divi->disable_static_css();
 		$this->divi->purge_et_cache_dir();
+		$this->sync_db_cron();
 		$this->ensure_cache_dir( self::PUBLIC_CACHE_DIR );
 		$this->ensure_cache_dir( self::PRIVATE_CACHE_DIR );
 
@@ -312,6 +413,7 @@ class RLCC_Cache_Cleaner {
 		if ( $deferred ) {
 			wp_unschedule_event( $deferred, self::DEFERRED_HOOK );
 		}
+		wp_clear_scheduled_hook( self::DB_CRON_HOOK );
 		
 		$this->drop_in->remove_object_cache_dropin();
 		$this->update_settings_option( array_merge( $this->get_settings(), [ 'object_cache_enabled' => false ] ) );
@@ -335,15 +437,112 @@ class RLCC_Cache_Cleaner {
 			et_core_clear_cache();
 			$report['divi_core_cache'] = [ 'label' => 'Divi core cache', 'status' => 'triggered' ];
 		}
-		if ( class_exists( '\ET\Builder\Framework\Utility\CacheUtility' ) ) {
+		if ( class_exists( '\\ET\\Builder\\Framework\\Utility\\CacheUtility' ) ) {
 			delete_transient( 'et_core_page_resource_fallback' );
 		}
-		
+
 		$et_cache_path = trailingslashit( WP_CONTENT_DIR ) . 'et-cache';
-		if ( is_dir( $et_cache_path ) ) {
-			$this->divi->purge_et_cache_dir();
-			$report['divi_et_cache'] = [ 'label' => 'Divi et-cache folder', 'status' => ! is_dir( $et_cache_path ) ? 'ok' : 'failed' ];
+		if ( file_exists( $et_cache_path ) || is_link( $et_cache_path ) ) {
+			$removed = $this->divi->purge_et_cache_dir();
+			clearstatcache( true, $et_cache_path );
+			$report['divi_et_cache'] = [ 'label' => 'Divi et-cache folder', 'status' => ( $removed && ! file_exists( $et_cache_path ) ) ? 'ok' : 'failed' ];
 		}
+	}
+
+	/** Clear known theme, page-builder and cache plugins. Every call is guarded, so missing plugins are simply skipped. */
+	private function purge_third_party_caches( array &$report ) {
+	$run = function ( $key, $label, $callback ) use ( &$report ) {
+		try {
+			call_user_func( $callback );
+			$report[ $key ] = [ 'label' => $label, 'status' => 'triggered' ];
+		} catch ( \Throwable $e ) {
+			$report[ $key ] = [ 'label' => $label, 'status' => 'failed' ];
+		}
+	};
+
+	if ( function_exists( 'rocket_clean_domain' ) ) {
+		$run( 'wp_rocket', 'WP Rocket', 'rocket_clean_domain' );
+	}
+	if ( function_exists( 'w3tc_flush_all' ) ) {
+		$run( 'w3_total_cache', 'W3 Total Cache', 'w3tc_flush_all' );
+	}
+	if ( function_exists( 'wp_cache_clear_cache' ) ) {
+		$run( 'wp_super_cache', 'WP Super Cache', 'wp_cache_clear_cache' );
+	}
+	if ( class_exists( 'LiteSpeed_Cache_API' ) || defined( 'LSCWP_V' ) ) {
+		$run( 'litespeed_cache', 'LiteSpeed Cache', function () {
+			do_action( 'litespeed_purge_all' ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+		} );
+	}
+	if ( function_exists( 'sg_cachepress_purge_cache' ) ) {
+		$run( 'sg_optimizer', 'SiteGround Optimizer', 'sg_cachepress_purge_cache' );
+	}
+	if ( function_exists( 'autoptimize_flush_pagecache' ) ) {
+		$run( 'autoptimize', 'Autoptimize', 'autoptimize_flush_pagecache' );
+	}
+	if ( class_exists( 'autoptimizeCache' ) && method_exists( 'autoptimizeCache', 'clearall' ) ) {
+		$run( 'autoptimize_files', 'Autoptimize files', [ 'autoptimizeCache', 'clearall' ] );
+	}
+	if ( function_exists( 'wpfc_clear_all_cache' ) ) {
+		$run( 'wp_fastest_cache', 'WP Fastest Cache', function () { wpfc_clear_all_cache( true ); } );
+	}
+	if ( class_exists( 'Breeze_PurgeCache' ) && method_exists( 'Breeze_PurgeCache', 'breeze_cache_flush' ) ) {
+		$run( 'breeze', 'Breeze', [ 'Breeze_PurgeCache', 'breeze_cache_flush' ] );
+	}
+	if ( class_exists( 'WP_Optimize' ) && function_exists( 'WP_Optimize' ) && method_exists( WP_Optimize(), 'get_page_cache' ) ) {
+		$run( 'wp_optimize', 'WP-Optimize', function () { WP_Optimize()->get_page_cache()->purge(); } );
+	}
+	if ( class_exists( 'Cache_Enabler' ) && method_exists( 'Cache_Enabler', 'clear_complete_cache' ) ) {
+		$run( 'cache_enabler', 'Cache Enabler', [ 'Cache_Enabler', 'clear_complete_cache' ] );
+	}
+	if ( has_action( 'wphb_clear_page_cache' ) ) {
+		$run( 'hummingbird', 'Hummingbird', function () { do_action( 'wphb_clear_page_cache' ); } ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+	}
+	if ( class_exists( '\\NitroPack\\SDK\\Api\\Cache' ) || has_action( 'nitropack_purge_all' ) ) {
+		$run( 'nitropack', 'NitroPack', function () { do_action( 'nitropack_purge_all' ); } ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+	}
+	if ( function_exists( 'flush_pagely_cache' ) || class_exists( 'PagelyCachePurge' ) ) {
+		$run( 'pagely', 'Pagely', function () { do_action( 'pagely_purge_all' ); } ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+	}
+	if ( class_exists( 'WpeCommon' ) ) {
+		$run( 'wp_engine', 'WP Engine', function () {
+			if ( method_exists( 'WpeCommon', 'purge_memcached' ) ) { WpeCommon::purge_memcached(); }
+			if ( method_exists( 'WpeCommon', 'purge_varnish_cache' ) ) { WpeCommon::purge_varnish_cache(); }
+		} );
+	}
+	if ( function_exists( 'kinsta_clear_cache' ) || has_action( 'kinsta_clear_cache_all' ) ) {
+		$run( 'kinsta', 'Kinsta Cache', function () { do_action( 'kinsta_clear_cache_all' ); } ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+	}
+	if ( function_exists( 'pantheon_clear_edge_all' ) ) {
+		$run( 'pantheon', 'Pantheon Edge', 'pantheon_clear_edge_all' );
+	}
+	if ( has_action( 'cloudflare_purge_everything' ) ) {
+		$run( 'cloudflare', 'Cloudflare', function () { do_action( 'cloudflare_purge_everything' ); } ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
+	}
+
+	// Page builders and themes that keep their own generated CSS/JS/data caches.
+	if ( class_exists( '\\Elementor\\Plugin' ) && isset( \Elementor\Plugin::$instance->files_manager ) ) {
+		$run( 'elementor', 'Elementor CSS cache', function () { \Elementor\Plugin::$instance->files_manager->clear_cache(); } );
+	}
+	if ( class_exists( 'FLBuilderModel' ) && method_exists( 'FLBuilderModel', 'delete_asset_cache_for_all_posts' ) ) {
+		$run( 'beaver_builder', 'Beaver Builder cache', function () { FLBuilderModel::delete_asset_cache_for_all_posts(); } );
+	}
+	if ( function_exists( 'oxygen_vsb_cache_universal_css' ) ) {
+		$run( 'oxygen', 'Oxygen cache', 'oxygen_vsb_cache_universal_css' );
+	}
+	if ( class_exists( '\\Bricks\\Assets' ) && method_exists( '\\Bricks\\Assets', 'delete_assets_cache' ) ) {
+		$run( 'bricks', 'Bricks cache', function () { \Bricks\Assets::delete_assets_cache(); } );
+	}
+	if ( function_exists( 'wc_delete_product_transients' ) ) {
+		$run( 'woocommerce', 'WooCommerce transients', function () {
+			wc_delete_product_transients();
+			if ( function_exists( 'wc_delete_shop_order_transients' ) ) { wc_delete_shop_order_transients(); }
+			if ( class_exists( 'WC_Cache_Helper' ) ) { WC_Cache_Helper::get_transient_version( 'product', true ); }
+		} );
+	}
+
+	// Lets any other theme or plugin attach its own cache cleanup.
+	do_action( 'rlcc_purge_third_party_caches' );
 	}
 
 	public function maybe_run_overdue_clear() {
@@ -355,7 +554,7 @@ class RLCC_Cache_Cleaner {
 			return;
 		}
 		$settings = $this->get_settings();
-		$grace    = max( 60, (int) $settings['interval_minutes'] * 60 );
+		$grace    = max( 3600, (int) $settings['interval_minutes'] * 60 );
 		if ( time() < $next + $grace ) {
 			return; 
 		}
@@ -363,8 +562,8 @@ class RLCC_Cache_Cleaner {
 			return;
 		}
 		set_transient( 'rlcc_overdue_clear_lock', 1, 30 );
-		$this->light_clear();
-		$this->reschedule_cron();
+		// Do not run expensive cache/database work during a visitor request.
+		// WP-Cron will process the scheduled clear asynchronously.
 	}
 
 	public function light_clear() {
@@ -417,29 +616,17 @@ class RLCC_Cache_Cleaner {
 		$report['page_cache_public']  = [ 'label' => 'Public Cache files', 'status' => $this->purge_page_cache( self::PUBLIC_CACHE_DIR ) ? 'ok' : 'failed' ];
 		$report['page_cache_private'] = [ 'label' => 'Private Cache files', 'status' => $this->purge_page_cache( self::PRIVATE_CACHE_DIR ) ? 'ok' : 'failed' ];
 
-		if ( function_exists( 'rocket_clean_domain' ) ) {
-			rocket_clean_domain();
-			$report['wp_rocket'] = [ 'label' => 'WP Rocket', 'status' => 'triggered' ];
-		}
-		if ( function_exists( 'w3tc_flush_all' ) ) {
-			w3tc_flush_all();
-			$report['w3_total_cache'] = [ 'label' => 'W3 Total Cache', 'status' => 'triggered' ];
-		}
-		if ( function_exists( 'wp_cache_clear_cache' ) ) {
-			wp_cache_clear_cache();
-			$report['wp_super_cache'] = [ 'label' => 'WP Super Cache', 'status' => 'triggered' ];
-		}
-		if ( class_exists( 'LiteSpeed_Cache_API' ) ) {
-			do_action( 'litespeed_purge_all' ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
-			$report['litespeed_cache'] = [ 'label' => 'LiteSpeed Cache', 'status' => 'triggered' ];
-		}
-		if ( function_exists( 'sg_cachepress_purge_cache' ) ) {
-			sg_cachepress_purge_cache();
-			$report['sg_optimizer'] = [ 'label' => 'SiteGround Optimizer', 'status' => 'triggered' ];
-		}
-		if ( function_exists( 'autoptimize_flush_pagecache' ) ) {
-			autoptimize_flush_pagecache();
-			$report['autoptimize'] = [ 'label' => 'Autoptimize', 'status' => 'triggered' ];
+		$this->purge_third_party_caches( $report );
+
+		// Other cache integrations may regenerate Divi assets; remove the root last.
+		$divi_path    = trailingslashit( WP_CONTENT_DIR ) . 'et-cache';
+		$divi_deleted = $this->divi->purge_et_cache_dir();
+		clearstatcache( true, $divi_path );
+		if ( file_exists( $divi_path ) || is_link( $divi_path ) || $this->divi->is_active() ) {
+			$report['divi_et_cache'] = [
+				'label'  => 'Divi et-cache folder',
+				'status' => ( $divi_deleted && ! file_exists( $divi_path ) ) ? 'ok' : 'failed',
+			];
 		}
 
 		update_option( 'rlcc_asset_version', time() );
@@ -448,6 +635,18 @@ class RLCC_Cache_Cleaner {
 		update_option( 'rlcc_last_clear_type', 'full' );
 
 		do_action( 'rlcc_after_cache_clear' );
+
+		// Integrations hooked above may recreate et-cache; purge again now and once more at the end of the request.
+		if ( $this->divi->is_active() ) {
+			$divi_deleted = $this->divi->purge_et_cache_dir();
+			clearstatcache( true, $divi_path );
+			$report['divi_et_cache'] = [
+				'label'  => 'Divi et-cache folder',
+				'status' => ( $divi_deleted && ! file_exists( $divi_path ) ) ? 'ok' : 'failed',
+			];
+			update_option( 'rlcc_last_clear_report', [ 'type' => 'full', 'items' => $report ] );
+			$this->divi->schedule_shutdown_purge();
+		}
 	}
 
 	public function recursive_clear_directory( $dir ) {
@@ -456,7 +655,7 @@ class RLCC_Cache_Cleaner {
 		foreach ( $items as $item ) {
 			if ( $item === '.' || $item === '..' ) continue;
 			$path = $dir . '/' . $item;
-			if ( is_dir( $path ) ) {
+			if ( is_dir( $path ) && ! is_link( $path ) ) {
 				$this->recursive_clear_directory( $path );
 				$this->fs()->rmdir( $path );
 			} else {
@@ -623,6 +822,29 @@ class RLCC_Cache_Cleaner {
 		return true;
 	}
 
+	/**
+	 * Browser cache clear: after every cache clear the stored asset version changes, and this adds it to the
+	 * URLs of this site's own CSS/JS files so visitors' browsers download fresh copies. Opt-in; front end only.
+	 */
+	public function bust_browser_cache_src( $src ) {
+		if ( is_admin() || ! is_string( $src ) || '' === $src ) {
+			return $src;
+		}
+		$settings = $this->get_settings();
+		if ( empty( $settings['cache_browser'] ) ) {
+			return $src;
+		}
+		$version = (int) get_option( 'rlcc_asset_version', 0 );
+		if ( $version < 1 ) {
+			return $src;
+		}
+		$src_host = wp_parse_url( $src, PHP_URL_HOST );
+		if ( $src_host && strtolower( $src_host ) !== strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) ) ) {
+			return $src; // Only this site's own files; never third-party URLs.
+		}
+		return add_query_arg( 'rlcc_v', $version, $src );
+	}
+
 	public function maybe_send_browser_cache_headers() {
 		if ( is_admin() || headers_sent() ) {
 			return;
@@ -632,6 +854,20 @@ class RLCC_Cache_Cleaner {
 		}
 		$settings = $this->get_settings();
 		if ( empty( $settings['cache_browser'] ) ) {
+			return;
+		}
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : 'GET';
+		if ( ! in_array( $method, [ 'GET', 'HEAD' ], true ) ) {
+			return;
+		}
+		// Never let browsers or proxies store personal, dynamic or private pages.
+		if ( is_user_logged_in() || ( defined( 'DONOTCACHEPAGE' ) && DONOTCACHEPAGE ) ) {
+			return;
+		}
+		if ( is_404() || is_search() || is_preview() || is_customize_preview() || ( is_singular() && post_password_required() ) ) {
+			return;
+		}
+		if ( function_exists( 'is_cart' ) && ( is_cart() || is_checkout() || ( function_exists( 'is_account_page' ) && is_account_page() ) ) ) {
 			return;
 		}
 		$max_age = max( 60, (int) $settings['interval_minutes'] * 60 );

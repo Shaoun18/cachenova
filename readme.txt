@@ -1,83 +1,117 @@
-=== CacheNova ===
+=== CacheNova – Auto Clear Cache, Browser Cache & Database Optimizer ===
 Contributors: shaounchandrashill
-Tags: cache, performance, object cache, page cache, developer tools
+Tags: clear cache, auto clear cache, browser cache, cache, performance
 Requires at least: 7.0
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Automatically clears and manages WordPress cache layers on a scheduled basis, helping keep the site fresh and optimized without impacting performance.
+Auto clear cache on a schedule or on save. Clear browser, page and object cache, plus database optimization. Works with Divi, Elementor, WooCommerce.
 
 == Description ==
 
-A general-purpose cache-clearing plugin for any WordPress site. It works identically regardless of which theme or page builder you use — Divi, Elementor, Gutenberg, a classic theme, all of it — because it hooks into WordPress's own standard save/activate/deactivate events, not anything builder-specific.
+**CacheNova is an auto cache clear plugin for WordPress.** It clears your site's cache automatically, on a schedule you choose and every time you change something, so visitors always see your latest edits. Need it right now? Click **Clear Cache Now** in the top admin bar, on any page, with no page reload.
 
-**What it does, on any site:**
+Works with any theme and any page builder: Divi, Elementor, Beaver Builder, Bricks, Oxygen, the block editor and classic themes.
 
-* Instantly clears every relevant cache the moment you save a page or post — the block editor, the Customizer, Divi Builder, or any other editor — no manual reload required.
-* Runs a lightweight background job on a custom schedule (1, 3, 5, 10, 20, 30, or 60 minutes — your choice) to keep object cache and expired transients tidy, without touching site performance.
-* Also clears automatically whenever any plugin on the site is activated, deactivated, or deleted.
-* Detects and flushes WP Rocket, W3 Total Cache, WP Super Cache, LiteSpeed Cache, SiteGround Optimizer, and Autoptimize automatically if they're active — no extra configuration.
-* Optional built-in Public/Private page caching, with a true early-bypass mode that serves cached pages before WordPress even loads.
-* Optional persistent object cache — APCu, Redis, Memcached, or a zero-dependency File-based fallback — auto-detected and auto-selected, no manual backend picking or connection testing required.
-* Automatically refreshes its own page-cache and object-cache files whenever the plugin itself is updated, so bug fixes and speed improvements actually take effect instead of a stale copy silently running forever.
-* Optional Database Optimization — clean post revisions, trashed posts, spam comments, and expired transients, plus a table-optimization pass. Off by default, only runs when explicitly requested.
-* Ships with a modern React-based settings panel (built on WordPress's own bundled React — no separate build step, no bloat) with live toast notifications and a real-time countdown to the next scheduled clear.
+= Clear cache automatically (auto cache clear) =
 
-**Why "light" vs "full" clearing matters**
+* **Auto clear cache on a schedule** — every 10, 20 or 30 minutes, every hour, every day, every 7 days or every 30 days.
+* **Auto clear cache on save** — clears the moment you update a post or page, save in the Customizer, edit a menu, switch theme, or activate, deactivate, update or delete a plugin.
+* **Clear Cache Now button** in the WordPress admin bar and inside the plugin dashboard, with a live toast message and a spinning icon while it works.
+* **Smart light and full clears** — the frequent scheduled clear is lightweight; the full clear only runs when something really changed.
 
-Earlier cache-clearing approaches run a full clear (OPcache reset, full cache-plugin flush, filesystem walks) on every timer tick — which can itself slow a site down if it happens too often. This plugin splits the work:
+= Browser cache clear =
 
-* **Light clear** (runs on your background schedule): only the cache types you've switched on. Cheap, frequent, invisible.
-* **Full clear** (runs only when something actually changed — a save, manual click, theme switch, or plugin update): everything, including OPcache and third-party cache plugin flushes.
+Turn on **Browser Cache** and every cache clear gives your site's own CSS and JavaScript files a fresh version number, so visitors' browsers download the newest files instead of showing an old copy. Cache-Control headers are sent only to logged-out visitors, and never on cart, checkout, account, search, 404, preview or password-protected pages. It is off by default.
 
-**Automatic bonus support for Divi**
+= Clears every cache layer =
 
-If Divi happens to be active on the site, the plugin detects it automatically and adds continuous purging of Divi's `et-cache` directory — a common source of "I edited it but nothing changed" on Divi sites — plus disabling Divi 4's Static CSS File Generation setting so the folder is never created in the first place. On Divi 5 (which removed that setting entirely), the plugin purges the folder after every request instead. None of this runs, and none of it is needed, on a site that isn't using Divi — the rest of the plugin works exactly the same either way.
+* Object cache and expired transients
+* PHP OPcache
+* Built-in public and private page cache, plus an optional early-bypass mode that serves cached pages before WordPress loads
+* Optional persistent object cache: Redis, Memcached, APCu or a file-based fallback, picked automatically
+* **Other cache plugins, when active:** WP Rocket, W3 Total Cache, WP Super Cache, LiteSpeed Cache, SiteGround Optimizer, Autoptimize, WP Fastest Cache, Breeze, WP-Optimize, Cache Enabler, Hummingbird and NitroPack
+* **Page builders and WooCommerce, when active:** Elementor, Beaver Builder, Bricks, Oxygen and WooCommerce product transients
+* **Hosting caches, when detected:** WP Engine, Kinsta, Pantheon, Pagely and Cloudflare plugin hooks
+* Developers can hook their own cleanup into `rlcc_purge_third_party_caches`
+
+= Database optimization (automatic or manual) =
+
+A dedicated **Database Optimization** tab keeps your database small and fast:
+
+* Auto-optimize **every 1 day, every 7 days or every month**. Each run clears all post revisions, trashed posts, spam comments, trashed comments and expired transients, then optimizes your database tables.
+* Or run a manual cleanup whenever you want, choosing exactly which items to clean.
+* Off by default. Nothing is deleted until you turn it on and confirm.
+
+= Divi cache clear (automatic bonus support) =
+
+If Divi is active, CacheNova clears Divi's `et-cache` folder every time you clear the cache, fixing the common "I edited it but nothing changed" problem. It handles read-only files and symlinks safely, and only ever removes the `et-cache` folder inside wp-content. On Divi 4 it also turns off Static CSS File Generation. Nothing Divi-specific runs on sites that don't use Divi.
+
+= A modern, simple dashboard =
+
+* Built on WordPress's own bundled React, with no extra bundles or build step
+* Clear confirmation windows before anything risky, and live toast notifications
+* Real-time countdown to the next automatic clear
+* Last clear report that shows exactly what was cleared and verified
 
 == Installation ==
 
-1. Upload the plugin folder to `/wp-content/plugins/`, or install the zip directly through Plugins → Add New → Upload Plugin.
-2. Activate the plugin through the 'Plugins' menu in WordPress.
-3. Go to Settings → CacheNova to choose your auto-clear interval and toggle toast notifications.
-
-No further configuration is required — Divi's Static CSS File Generation is disabled automatically the moment the plugin activates.
+1. Upload the plugin folder to `/wp-content/plugins/`, or go to Plugins → Add New → Upload Plugin and upload the zip.
+2. Activate the plugin through the Plugins menu in WordPress.
+3. Go to Settings → CacheNova to choose how often to auto clear the cache. Optional features such as Browser Cache and Database Optimization are off until you turn them on.
 
 == Frequently Asked Questions ==
 
-= Does this only work with Divi, or with any theme and plugin? =
+= How do I clear the cache in WordPress? =
 
-Any theme, any plugin. The core of this plugin — clearing transients, object cache, OPcache, its own optional page cache, and popular third-party cache plugins, on a schedule and on every save — hooks into WordPress's own standard events (`save_post`, `switch_theme`, `activated_plugin`, and so on), which fire identically no matter what theme or page builder is active. Divi support is a bonus that's detected and applied automatically only if Divi happens to be installed; nothing Divi-specific runs, and nothing is required, on a site that isn't using it.
+Click **Clear Cache Now** in the top admin bar, or open Settings → CacheNova and use the button at the top. It clears every cache layer in one click and shows a message when it is done.
 
-= Will this conflict with my other caching plugin? =
+= How do I auto clear cache in WordPress? =
 
-No. It detects common caching plugins (WP Rocket, W3 Total Cache, WP Super Cache, LiteSpeed Cache, SiteGround Optimizer, Autoptimize) and flushes them as part of a full clear, rather than working against them.
+Open Settings → CacheNova and choose **Auto-clear every** (10, 20 or 30 minutes, 1 hour, 1 day, 7 days or 30 days). CacheNova also clears automatically whenever you save content, change a menu or theme, or activate, deactivate or update a plugin.
 
-= Can I re-enable Divi's Static CSS File Generation? =
+= How do I clear the browser cache for my WordPress site? =
 
-On Divi 4 sites: not while this plugin is active — it's re-enforced on every page load. On Divi 5: there is no longer a setting for this at all (Elegant Themes removed it), so the question doesn't apply — the plugin purges the et-cache folder after every request instead.
+Turn on **Browser Cache** under Settings → CacheNova → Cache Types. After that, every cache clear changes the version number on your site's own CSS and JavaScript files, so visitors' browsers fetch fresh copies. This works for all visitors without asking them to press Ctrl+F5.
 
-= Does this fully prevent the et-cache folder from ever existing on Divi 5? =
+= Does it work with Divi, Elementor, WooCommerce and other themes and plugins? =
 
-Not for the full duration of a request — Divi 5 has no opt-out for dynamic CSS generation, so it may briefly create files while serving a page. This plugin removes them again immediately after each request finishes, so the folder never persists or accumulates stale files, but it can't be prevented from being written to at all on Divi 5 the way it can on Divi 4.
+Yes. CacheNova hooks into WordPress's own standard events, so it works with any theme and page builder. It also clears the caches of Divi, Elementor, Beaver Builder, Bricks, Oxygen and WooCommerce product transients when they are active.
+
+= Will it conflict with my other caching plugin? =
+
+No. It detects popular caching plugins (WP Rocket, W3 Total Cache, WP Super Cache, LiteSpeed Cache, SiteGround Optimizer, Autoptimize, WP Fastest Cache, Breeze, WP-Optimize, Cache Enabler, Hummingbird and NitroPack) and clears them as part of a full clear instead of working against them.
+
+= Is Browser Cache safe for logged-in users and WooCommerce? =
+
+Yes. Cache headers are never sent to logged-in users, on WooCommerce cart, checkout or account pages, on search, 404 or preview pages, on password-protected posts, or on non-GET requests.
+
+= Is the automatic database optimization safe? =
+
+It permanently deletes post revisions, trashed posts, spam comments, trashed comments and expired transients, so it is **off by default** and asks you to confirm before it turns on. Take a backup first if you want to keep your revisions.
 
 = Does the background schedule slow my site down? =
 
-No — the scheduled background tick only performs a lightweight clear (object cache and expired transients). The heavier full clear only runs when you actually save content in Divi or click "Clear Cache Now" manually.
+No. The scheduled run is a lightweight clear. The heavier full clear only runs when something changes, or when you click Clear Cache Now.
 
-= What does "Delete all data on uninstall" actually delete? =
+= The Divi et-cache folder was not being removed. Is that fixed? =
 
-With that toggle ON, deleting the plugin (not just deactivating it) removes its settings, its last-cleared/last-clear-type records, and the wp-content/cache/cachenova folder it uses for the built-in Public/Private page cache, then runs one final full-site cache clear. It does not touch Divi's own et-cache folder, since that belongs to Divi, not to this plugin. It's OFF by default, so a normal delete leaves your settings in place in case you reinstall later.
+Yes. Version 1.1.0 removes the folder reliably, including on Windows and local servers, and checks again at the end of the request in case Divi recreates it. If your server still blocks deleting the folder (for example because of file ownership), the last clear report shows it as failed instead of pretending it worked.
 
-= What is the Persistent Object Cache feature, and is it safe to turn on? =
+= Can I re-enable Divi's Static CSS File Generation? =
 
-A persistent object cache lets WordPress reuse database query results across page loads (via APCu, Redis, or Memcached) instead of re-querying every time, which typically speeds up admin and front-end response times. It's OFF by default. Turning it on runs a real connection test first — nothing is installed if that test fails. If it succeeds, the plugin writes a wp-content/object-cache.php drop-in plus a small config file, and clears the cache once so it starts clean. It will never overwrite a different object-cache.php that's already there (from WP Redis, W3 Total Cache, etc.) — it detects that and asks you to remove the existing one first. Deactivating this plugin always removes the drop-in again, so caching goes back to WordPress's normal per-request behavior the moment you switch it off.
+On Divi 4: not while this plugin is active. On Divi 5 the setting no longer exists, so CacheNova simply removes the et-cache folder when you clear the cache.
 
-= Does this work outside of Divi? =
+= What does "Delete all data on uninstall" delete? =
 
-The cache-plugin detection and general WordPress cache clearing work on any site. The Static CSS File Generation override is Divi-specific and has no effect if Divi isn't active.
+With it ON, deleting the plugin (not just deactivating) removes its settings, reports, schedules and the wp-content/cache/cachenova folder, then runs one final full-site cache clear. It never touches Divi's own et-cache folder. It is OFF by default. You can find it on the Database Optimization tab.
+
+= What is the Persistent Object Cache, and is it safe to turn on? =
+
+It lets WordPress reuse database results across page loads using Redis, Memcached or APCu, or a file-based fallback. It is OFF by default and runs a connection test before installing anything. It never overwrites a different object-cache.php that is already there, and deactivating the plugin removes its drop-in again.
 
 == Screenshots ==
 
@@ -86,16 +120,17 @@ The cache-plugin detection and general WordPress cache clearing work on any site
 
 == Changelog ==
 
-= 1.0.0 =
-* Initial public release. Auto-clears transients, object cache, OPcache, and page cache on save or schedule, on any WordPress theme or plugin.
-* Optional built-in Public/Private page cache with a true early-bypass mode (serves cached pages before WordPress even loads).
-* Optional persistent object cache with automatic backend detection — Redis, Memcached, APCu, or a zero-dependency file-based fallback — no manual setup required.
-* Database Optimization tool: clean post revisions, trashed posts, spam and trashed comments, and expired transients, plus a table-optimization pass. Off by default, only runs when explicitly requested.
-* Automatically refreshes its own cache files whenever the plugin itself is updated, so bug fixes and improvements always take effect instead of a stale copy silently running forever.
-* If Divi is active, also keeps its et-cache folder from ever accumulating stale files (Divi 4 and Divi 5).
-* React-based settings dashboard (built on WordPress's own bundled React, no build step) with live status, toast notifications, and a real-time countdown to the next scheduled clear.
+= 1.1.0 =
+* New: Database Optimization tab with automatic scheduling (every 1 day, 7 days or month) plus manual cleanup.
+* New: Clear Cache Now in the admin bar now has a plugin icon, clears without a page reload, and shows a toast message.
+* New: Modern confirmation windows replace the old browser alerts.
+* New: Browser Cache now really refreshes browsers: your site's own CSS and JS files get a new version after each clear.
+* Fixed: Divi et-cache folder not being removed on Clear Cache (Windows-safe paths, read-only files, symlinks, retry and an end-of-request check).
+* Fixed: Browser cache headers are no longer sent to logged-in users or WooCommerce cart, checkout and account pages.
+* Improved: Clear Cache now also clears Elementor, Beaver Builder, Bricks, Oxygen, WooCommerce transients and more cache plugins and hosts.
+* Improved: "Delete all data on uninstall" now appears once, on the Database Optimization tab, and also removes the new schedule and reports.
+* Fixed: CacheNova's own object-cache.php and advanced-cache.php drop-ins were wrongly reported as "already installed by someone else" and could be left behind on deactivation. They are now recognised and removed correctly.
+* Fixed: The cleaned-items count no longer includes an internal batch number, and changing a setting no longer restarts the auto-clear countdown.
 
-== Upgrade Notice ==
-
 = 1.0.0 =
-Initial public release.
+* Initial release.

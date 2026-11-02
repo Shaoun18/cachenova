@@ -1,4 +1,8 @@
 <?php
+/**
+ * Advanced Cache Name: CacheNova Early-Bypass Page Cache
+ * Installed and managed by the CacheNova plugin. Signature: RLCC_ADVANCED_CACHE_DROPIN
+ */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;

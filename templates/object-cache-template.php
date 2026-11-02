@@ -1,4 +1,8 @@
 <?php
+/**
+ * Object Cache Name: CacheNova Persistent Object Cache
+ * Installed and managed by the CacheNova plugin. Signature: RLCC_PERSISTENT_OBJECT_CACHE_DROPIN
+ */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;

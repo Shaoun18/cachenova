@@ -1,4 +1,4 @@
-=== CacheNova – Auto Clear Cache, Browser Cache & Database Optimizer ===
+=== CacheNova ===
 Contributors: shaounchandrashill
 Tags: clear cache, auto clear cache, browser cache, cache, performance
 Requires at least: 7.0

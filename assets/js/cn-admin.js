@@ -846,9 +846,9 @@
         function renderDbTab() {
             const scheduleOn = dbSchedule !== "off";
             return h("div", {
-                className: "rlcc-card-grid"
+                className: "rlcc-card-grid rlcc-card-grid--three"
             }, h("div", {
-                className: "rlcc-card rlcc-card--wide"
+                className: "rlcc-card"
             }, h("h3", {
                 className: "rlcc-card-title"
             }, h("span", {
@@ -873,7 +873,7 @@
             }, h("label", null, "Status"), h("div", {
                 className: "rlcc-db-status " + (scheduleOn ? "rlcc-db-status--on" : "rlcc-db-status--off")
             }, scheduleOn ? "Active — next run " + formatDateTime(dbNextRun) : "Off — nothing runs automatically")))), h("div", {
-                className: "rlcc-card rlcc-card--wide"
+                className: "rlcc-card"
             }, h("h3", {
                 className: "rlcc-card-title"
             }, h("span", {
@@ -906,7 +906,7 @@
             }, dbRunning ? "Optimizing…" : "Optimize Database Now"), dbLastTimestamp > 0 && h("p", {
                 className: "rlcc-hint"
             }, "Last run: ", timeAgo(dbLastTimestamp), " (" + (dbLastType === "auto" ? "automatic" : "manual") + ")", dbLastReport ? " — " + dbReportTotal(dbLastReport) + " item(s) cleaned" + (dbLastReport.optimize_tables ? ", " + dbLastReport.optimize_tables + " table(s) optimized" : "") : "")), h("div", {
-            className: "rlcc-card rlcc-card--wide rlcc-card--danger"
+            className: "rlcc-card rlcc-card--danger"
         }, h("h3", {
             className: "rlcc-card-title rlcc-card-title--danger"
         }, "Danger Zone"), h("div", {
@@ -1054,10 +1054,6 @@
         }), h("span", {
             className: "rlcc-switch-label"
         }, cacheBrowser ? "On" : "Off"))))), h("div", {
-            className: "rlcc-card rlcc-card--wide"
-        }, h("h3", {
-            className: "rlcc-card-title"
-        }, h("span", {className:"rlcc-card-symbol", "aria-hidden":"true"}, "▤"), "Last Clear Report"), h(ClearReportCard)), h("div", {
             className: "rlcc-card"
         }, h("h3", {
             className: "rlcc-card-title"
@@ -1158,7 +1154,11 @@
             className: "rlcc-oc-status rlcc-oc-status--" + ecResultStatus
         }, ecResultMessage), !ecWpConfigWritable && h("p", {
             className: "rlcc-oc-unavailable"
-        }, "wp-config.php doesn't look writable — if enabling doesn't take effect, add define('WP_CACHE', true); yourself near the top, right after the opening <?php tag."))), h(ConfirmModal, {
+        }, "wp-config.php doesn't look writable — if enabling doesn't take effect, add define('WP_CACHE', true); yourself near the top, right after the opening <?php tag.")), h("div", {
+            className: "rlcc-card rlcc-card--wide"
+        }, h("h3", {
+            className: "rlcc-card-title"
+        }, h("span", {className:"rlcc-card-symbol", "aria-hidden":"true"}, "▤"), "Last Clear Report"), h(ClearReportCard))), h(ConfirmModal, {
             modal: modal,
             onCancel: closeModal,
             onConfirm: acceptModal

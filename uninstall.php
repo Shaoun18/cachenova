@@ -105,6 +105,7 @@ $rlcc_options = [
 	'rlcc_last_clear_report',
 	'rlcc_last_db_optimize',
 	'rlcc_installed_version',
+	'rlcc_divi_purge_lock',
 ];
 foreach ( $rlcc_options as $rlcc_option ) {
 	delete_option( $rlcc_option );

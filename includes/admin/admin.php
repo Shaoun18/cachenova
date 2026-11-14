@@ -255,6 +255,7 @@ class RLCC_Admin {
 			// Use WordPress APIs so both database and external object-cache transients are handled safely, in batches.
 			$deleted = 0;
 			for ( $batch = 0; $batch < 20; $batch++ ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				$expired = $wpdb->get_col( $wpdb->prepare(
 					"SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND option_value < %d LIMIT 500",
 					$wpdb->esc_like( '_transient_timeout_' ) . '%', time()

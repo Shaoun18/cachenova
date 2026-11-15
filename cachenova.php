@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Plugin Name: CacheNova – Auto Clear Cache, Browser Cache & Database Optimizer
+ * Plugin Name: CacheNova
  * Plugin URI:  https://wordpress.org/plugins/cachenova/
  * Description: Auto clear cache on a schedule or on save. Clear browser, page and object cache, plus database optimization. Works with Divi, Elementor, WooCommerce.
  * Version: 1.1.0
@@ -143,19 +143,18 @@ class RLCC_Cache_Cleaner {
 		if ( empty( $settings['divi_per_request_purge'] ) || ! $this->divi->is_active() || is_admin() || wp_doing_ajax() || wp_doing_cron() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
 			return;
 		}
-		// A short lock prevents concurrent requests repeatedly deleting the same folder.
-		$lock = trailingslashit( WP_CONTENT_DIR ) . 'cache/cachenova-divi-purge.lock';
-		$dir = dirname( $lock );
-		if ( ! is_dir( $dir ) ) { wp_mkdir_p( $dir ); }
-		if ( ! is_writable( $dir ) ) { return; }
-		$fp = @fopen( $lock, 'c' );
-		if ( ! $fp ) { return; }
-		if ( ! flock( $fp, LOCK_EX | LOCK_NB ) ) { fclose( $fp ); return; }
+		// A short lock (an option row, no file handles) stops concurrent requests repeatedly deleting the same folder.
+		$now = time();
+		if ( ! add_option( 'rlcc_divi_purge_lock', $now, '', false ) ) {
+			if ( ( $now - (int) get_option( 'rlcc_divi_purge_lock', 0 ) ) < 30 ) {
+				return;
+			}
+			update_option( 'rlcc_divi_purge_lock', $now, false ); // Stale lock from a crashed request.
+		}
 		try {
 			$this->divi->purge_et_cache_dir();
 		} finally {
-			flock( $fp, LOCK_UN );
-			fclose( $fp );
+			delete_option( 'rlcc_divi_purge_lock' );
 		}
 	}
 

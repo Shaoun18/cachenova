@@ -68,12 +68,63 @@ class RLCC_Divi_Integration {
 		return $parent === $root && 'et-cache' === strtolower( basename( $actual ) );
 	}
 
-	/** Recursively delete a tree; fixes read-only permissions (common on Windows/Laragon/XAMPP) and never follows links. */
+	/** WP_Filesystem handle shared with the main plugin (direct method). */
+	private function fs() {
+		return ( $this->plugin && method_exists( $this->plugin, 'fs' ) ) ? $this->plugin->fs() : null;
+	}
+
+	/** Delete one file or link; fixes read-only permissions (common on Windows/Laragon/XAMPP) and retries once. */
+	private function remove_file( $path ) {
+		wp_delete_file( $path );
+		clearstatcache( true, $path );
+		if ( file_exists( $path ) || is_link( $path ) ) {
+			$fs = $this->fs();
+			if ( $fs ) {
+				$fs->chmod( $path, 0666 );
+			}
+			wp_delete_file( $path );
+			clearstatcache( true, $path );
+		}
+		return ! ( file_exists( $path ) || is_link( $path ) );
+	}
+
+	/** Remove an EMPTY directory (non-recursive), fixing permissions and retrying once. */
+	private function remove_empty_dir( $dir ) {
+		$fs = $this->fs();
+		if ( ! $fs ) {
+			return false;
+		}
+		$fs->delete( $dir, false, 'd' );
+		clearstatcache( true, $dir );
+		if ( file_exists( $dir ) ) {
+			$fs->chmod( $dir, 0777 );
+			$fs->delete( $dir, false, 'd' );
+			clearstatcache( true, $dir );
+		}
+		return ! file_exists( $dir );
+	}
+
+	/** Remove a symbolic link / junction itself, never its target. */
+	private function remove_link( $path ) {
+		if ( ! $this->remove_file( $path ) && is_link( $path ) ) {
+			$fs = $this->fs();
+			if ( $fs ) {
+				$fs->delete( $path, false, 'd' ); // Windows junctions are removed like empty directories.
+			}
+		}
+		clearstatcache( true, $path );
+		return ! ( file_exists( $path ) || is_link( $path ) );
+	}
+
+	/** Recursively delete a tree; never follows links. */
 	private function remove_tree( $dir ) {
-		$items = @scandir( $dir );
+		$items = @scandir( $dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 		if ( false === $items ) {
-			@chmod( $dir, 0755 );
-			$items = @scandir( $dir );
+			$fs = $this->fs();
+			if ( $fs ) {
+				$fs->chmod( $dir, 0755 );
+			}
+			$items = @scandir( $dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 			if ( false === $items ) return false;
 		}
 		$ok = true;
@@ -81,18 +132,14 @@ class RLCC_Divi_Integration {
 			if ( '.' === $name || '..' === $name ) continue;
 			$item = $dir . DIRECTORY_SEPARATOR . $name;
 			if ( is_link( $item ) ) {
-				if ( ! @unlink( $item ) && ! @rmdir( $item ) ) $ok = false;
+				if ( ! $this->remove_link( $item ) ) $ok = false;
 			} elseif ( is_dir( $item ) ) {
 				if ( ! $this->remove_tree( $item ) ) $ok = false;
-			} elseif ( ! @unlink( $item ) ) {
-				@chmod( $item, 0666 );
-				if ( ! @unlink( $item ) ) $ok = false;
+			} elseif ( ! $this->remove_file( $item ) ) {
+				$ok = false;
 			}
 		}
-		if ( ! @rmdir( $dir ) ) {
-			@chmod( $dir, 0777 );
-			if ( ! @rmdir( $dir ) ) $ok = false;
-		}
+		if ( ! $this->remove_empty_dir( $dir ) ) $ok = false;
 		return $ok;
 	}
 
@@ -109,14 +156,10 @@ class RLCC_Divi_Integration {
 
 		// A symlinked et-cache: remove only the link itself, never the target.
 		if ( is_link( $path ) ) {
-			$gone = @unlink( $path ) || @rmdir( $path );
-			clearstatcache( true, $path );
-			return $gone && ! file_exists( $path );
+			return $this->remove_link( $path );
 		}
 		if ( ! is_dir( $path ) ) {
-			@unlink( $path );
-			clearstatcache( true, $path );
-			return ! file_exists( $path );
+			return $this->remove_file( $path );
 		}
 		if ( ! $this->is_safe_et_cache_path( $path ) ) return false;
 

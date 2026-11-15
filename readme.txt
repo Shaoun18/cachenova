@@ -121,16 +121,13 @@ It lets WordPress reuse database results across page loads using Redis, Memcache
 == Changelog ==
 
 = 1.1.0 =
-* New: Database Optimization tab with automatic scheduling (every 1 day, 7 days or month) plus manual cleanup.
-* New: Clear Cache Now in the admin bar now has a plugin icon, clears without a page reload, and shows a toast message.
-* New: Modern confirmation windows replace the old browser alerts.
-* New: Browser Cache now really refreshes browsers: your site's own CSS and JS files get a new version after each clear.
-* Fixed: Divi et-cache folder not being removed on Clear Cache (Windows-safe paths, read-only files, symlinks, retry and an end-of-request check).
-* Fixed: Browser cache headers are no longer sent to logged-in users or WooCommerce cart, checkout and account pages.
-* Improved: Clear Cache now also clears Elementor, Beaver Builder, Bricks, Oxygen, WooCommerce transients and more cache plugins and hosts.
-* Improved: "Delete all data on uninstall" now appears once, on the Database Optimization tab, and also removes the new schedule and reports.
-* Fixed: CacheNova's own object-cache.php and advanced-cache.php drop-ins were wrongly reported as "already installed by someone else" and could be left behind on deactivation. They are now recognised and removed correctly.
-* Fixed: The cleaned-items count no longer includes an internal batch number, and changing a setting no longer restarts the auto-clear countdown.
+* Added: Database Optimization with scheduled and manual cleanup.
+* Added: Improved admin bar cache clearing with toast notifications.
+* Added: Browser cache refresh through CSS/JS version updates.
+* Improved: Cache clearing support for Divi, Elementor, WooCommerce, and other builders and cache systems.
+* Improved: Modern confirmation dialogs and uninstall cleanup.
+* Fixed: Divi cache deletion, browser cache headers, and object-cache drop-in handling.
+* Fixed: Cleanup reports and automatic cache-clear scheduling.
 
 = 1.0.0 =
 * Initial release.
